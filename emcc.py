@@ -514,14 +514,11 @@ def get_all_js_library_funcs(temp_files):
   # mode of the js compiler that would generate a list of all possible symbols
   # that could be checked in.
   old_full = shared.Settings.INCLUDE_FULL_LIBRARY
-  old_linkable = shared.Settings.LINKABLE
   try:
     # Temporarily define INCLUDE_FULL_LIBRARY since we want a full list
     # of all available JS library functions.
     shared.Settings.INCLUDE_FULL_LIBRARY = True
-    # Temporarily set LINKABLE so that the jscompiler doesn't report
-    # undefined symbolls itself.
-    shared.Settings.LINKABLE = True
+    shared.Settings.CALCULATE_ONLY = True
     emscripten.generate_struct_info()
     glue, forwarded_data = emscripten.compile_settings(temp_files)
     forwarded_json = json.loads(forwarded_data)
@@ -536,8 +533,14 @@ def get_all_js_library_funcs(temp_files):
         # but it currently does.  Remove this once we fix wasm-ld.
         library_fns_list.append('__wasi_' + name)
   finally:
+    shared.Settings.CALCULATE_ONLY = False
     shared.Settings.INCLUDE_FULL_LIBRARY = old_full
-    shared.Settings.LINKABLE = old_linkable
+
+  # Some of these functions are actually not JS functions at all but fallbacks
+  # missing undefined native symbols.  Ignore these.
+  for f in ['__cxa_call_unexpected', '_ZSt18uncaught_exceptionv']:
+    if f in library_fns_list:
+      library_fns_list.remove(f)
   return library_fns_list
 
 
@@ -1214,6 +1217,11 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
     if shared.Settings.ASSERTIONS:
       shared.Settings.STACK_OVERFLOW_CHECK = 2
 
+    if shared.Settings.LLD_REPORT_UNDEFINED:
+      # Reporting undefined symbols at wasm-ld time requires us to know if we have `main` function
+      # or not.
+      shared.Settings.IGNORE_MISSING_MAIN = 0
+
     if shared.Settings.STRICT:
       shared.Settings.STRICT_JS = 1
       shared.Settings.AUTO_JS_LIBRARIES = 0
@@ -1410,7 +1418,7 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
     if shared.Settings.EMBIND:
       forced_stdlibs.append('libembind')
 
-    if not shared.Settings.MINIMAL_RUNTIME:
+    if not shared.Settings.MINIMAL_RUNTIME and not shared.Settings.BOOTSTRAPPING_STRUCT_INFO:
       # Always need malloc and free to be kept alive and exported, for internal use and other
       # modules
       shared.Settings.EXPORTED_FUNCTIONS += ['_malloc', '_free']
@@ -1479,7 +1487,7 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
       # no longer always bundled in)
       shared.Settings.DEFAULT_LIBRARY_FUNCS_TO_INCLUDE += ['$demangle', '$demangleAll', '$jsStackTrace', '$stackTrace']
 
-    if shared.Settings.FILESYSTEM:
+    if shared.Settings.FILESYSTEM and not shared.Settings.BOOTSTRAPPING_STRUCT_INFO:
       if shared.Settings.SUPPORT_ERRNO:
         shared.Settings.EXPORTED_FUNCTIONS += ['___errno_location'] # so FS can report errno back to C
       # to flush streams on FS exit, we need to be able to call fflush
@@ -2312,12 +2320,11 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
         just_calculate = DEBUG != 2 and not shared.Settings.WASM_BACKEND
         if shared.Settings.WASM_BACKEND:
           all_externals = None
-          if shared.Settings.LLD_REPORT_UNDEFINED:
+          if shared.Settings.LLD_REPORT_UNDEFINED and shared.Settings.ERROR_ON_UNDEFINED_SYMBOLS:
             all_externals = get_all_js_library_funcs(misc_temp_files)
             log_time('JS symbol generation')
-            # TODO(sbc): This is an incomplete list of __invoke functions.  Perhaps add
-            # support for wildcard to wasm-ld.
-            all_externals += ['emscripten_longjmp_jmpbuf', '__invoke_void', '__invoke_i32_i8*_...']
+            # TODO(sbc): Remove this after https://reviews.llvm.org/D77358
+            all_externals += ['emscripten_longjmp_jmpbuf']
           final = shared.Building.link_lld(linker_inputs, DEFAULT_FINAL, all_external_symbols=all_externals)
         else:
           final = shared.Building.link(linker_inputs, DEFAULT_FINAL, force_archive_contents=force_archive_contents, just_calculate=just_calculate)

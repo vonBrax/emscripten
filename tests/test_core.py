@@ -1604,6 +1604,7 @@ int main() {
 
   @also_with_standalone_wasm
   def test_ctors_no_main(self):
+    self.emcc_args.append('--no-entry')
     self.do_run_in_out_file_test('tests', 'core', 'test_ctors_no_main')
 
   def test_class(self):
@@ -3732,7 +3733,7 @@ ok
     if need_reverse:
       # test the reverse as well
       print('flip')
-      self.dylink_test(side, main, expected, header, main_emcc_args, force_c, need_reverse=False, **kwargs)
+      self.dylink_test(side, main, expected, header, main_emcc_args + ['--no-entry'], force_c, need_reverse=False, **kwargs)
 
   def do_basic_dylink_test(self, need_reverse=True):
     self.dylink_test(r'''
@@ -8816,10 +8817,13 @@ NODEFS is no longer included by default; build with -lnodefs.js
     # building library code that has no main.
     # TODO(sbc): Simplify the code by making this an opt-in feature.
     # https://github.com/emscripten-core/emscripten/issues/9640
+
     src = '''
     #include <emscripten.h>
     EMSCRIPTEN_KEEPALIVE void foo() {}
     '''
+    # Clear out the default tests settings since they include IGNORE_MISSING_MAIN=0
+    self.settings_mods = {}
     self.build(src, self.get_dir(), 'test.c')
 
   def test_fpic_static(self):
@@ -8863,6 +8867,8 @@ NODEFS is no longer included by default; build with -lnodefs.js
     self.do_run_in_out_file_test('tests', 'core', 'test_get_exported_function')
 
   def test_auto_detect_main(self):
+    # Clear out the default tests settings since they include IGNORE_MISSING_MAIN=0
+    self.settings_mods = {}
     self.do_run_in_out_file_test('tests', 'core', 'test_ctors_no_main')
 
     # Disabling IGNORE_MISSING_MAIN should cause link to fail due to missing main

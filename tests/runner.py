@@ -426,10 +426,16 @@ class RunnerCore(RunnerMeta('TestCase', (unittest.TestCase,), {})):
   def setUp(self):
     super(RunnerCore, self).setUp()
     self.settings_mods = {}
-    self.emcc_args = ['-Werror']
+    self.emcc_args = []
     self.save_dir = EMTEST_SAVE_DIR
     self.env = {}
     self.temp_files_before_run = []
+
+    # Ideally all our tests code would be build with -Wall, -Werror and -s STRICT.  For now
+    # we just enable a subset of the options that STRIT would enable.
+    self.emcc_args.append('-Werror')
+    self.set_setting('LLD_REPORT_UNDEFINED', 1)
+    self.set_setting('IGNORE_MISSING_MAIN', 0)
 
     if EMTEST_DETECT_TEMPFILE_LEAKS:
       for root, dirnames, filenames in os.walk(self.temp_dir):

@@ -188,3 +188,7 @@ var SEPARATE_DWARF = 0;
 
 // New WebAssembly exception handling (experimental)
 var EXCEPTION_HANDLING = 0;
+
+// Used internally when running the JS compiler simply to generate list of all
+// JS symbols.
+var CALCULATE_ONLY = 0;

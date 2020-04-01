@@ -263,6 +263,9 @@ function JSify(data, functionsOnly) {
         Functions.libraryFunctions[finalName] = 1;
       }
 
+      if (CALCULATE_ONLY)
+        return '';
+
       var postsetId = ident + '__postset';
       var postset = LibraryManager.library[postsetId];
       if (postset) {

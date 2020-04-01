@@ -1782,6 +1782,8 @@ class Building(object):
         cmd.append('--no-gc-sections')
         cmd.append('--export-dynamic')
 
+    expect_main = '_main' in Settings.EXPORTED_FUNCTIONS
+
     if Settings.LINKABLE:
       cmd.append('--export-all')
     else:
@@ -1797,6 +1799,8 @@ class Building(object):
       if all_external_symbols:
         # Filter out symbols external/JS symbols
         c_exports = [e for e in c_exports if e not in all_external_symbols]
+        if expect_main and Settings.IGNORE_MISSING_MAIN:
+          c_exports.remove('main')
       for export in c_exports:
         cmd += ['--export', export]
 
@@ -1813,8 +1817,7 @@ class Building(object):
       ]
       use_start_function = Settings.STANDALONE_WASM
 
-      if not use_start_function:
-        expect_main = '_main' in Settings.EXPORTED_FUNCTIONS
+      if not use_start_function and '--relocatable' not in opts and '-r' not in opts:
         if expect_main and not Settings.IGNORE_MISSING_MAIN:
           cmd += ['--entry=main']
         else:
