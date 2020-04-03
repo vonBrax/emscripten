@@ -431,8 +431,8 @@ class RunnerCore(RunnerMeta('TestCase', (unittest.TestCase,), {})):
     self.env = {}
     self.temp_files_before_run = []
 
-    # Ideally all our tests code would be build with -Wall, -Werror and -s STRICT.  For now
-    # we just enable a subset of the options that STRIT would enable.
+    # Ideally all our tests code would be built with -Wall, -Werror and -s STRICT.  For now
+    # we just enable a subset of the options that STRICT would enable.
     self.emcc_args.append('-Werror')
     self.set_setting('LLD_REPORT_UNDEFINED', 1)
     self.set_setting('IGNORE_MISSING_MAIN', 0)
