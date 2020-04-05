@@ -518,3 +518,8 @@ if (typeof __specialEventTargets !== 'undefined') {
 function postCustomMessage(data) {
   postMessage({ target: 'custom', userData: data });
 }
+
+Module.onRuntimeInitialized = function() {
+  importScripts('worker.js');
+  calledMain = true;
+}

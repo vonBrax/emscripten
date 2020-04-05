@@ -287,26 +287,8 @@ function shouldPreventDefault(event) {
   }
 };
 
-['keydown', 'keyup', 'keypress', 'blur', 'visibilitychange'].forEach(function(event) {
-  document.addEventListener(event, function(event) {
-    worker.postMessage({ target: 'document', event: cloneObject(event) });
-    
-    if (shouldPreventDefault(event)) {
-      event.preventDefault();
-    }
-  });
-});
-
-['unload'].forEach(function(event) {
-  window.addEventListener(event, function(event) {
-    worker.postMessage({ target: 'window', event: cloneObject(event) });
-  });
-});
-
-['mousedown', 'mouseup', 'mousemove', 'DOMMouseScroll', 'mousewheel', 'mouseout'].forEach(function(event) {
+['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(function(event) {
   Module.canvas.addEventListener(event, function(event) {
     worker.postMessage({ target: 'canvas', event: cloneObject(event) });
-    event.preventDefault();
-  }, true);
+  }, false);
 });
-
