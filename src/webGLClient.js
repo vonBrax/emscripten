@@ -269,6 +269,7 @@ function WebGLClient() {
     80: { name: 'drawBuffersWEBGL', func: func1 },
     81: { name: 'uniform1iv', func: uniform1iv },
     82: { name: 'uniform1fv', func: uniform1fv },
+    83: { name: 'flush', func: func0 },
   };
 
   function renderCommands(buf) {
@@ -326,7 +327,7 @@ WebGLClient.prefetch = function() {
     // If we have no webGL support, we still notify that prefetching is done, as the app blocks on that
     worker.postMessage({ target: 'gl', op: 'setPrefetched', preMain: true });
     return;
-  } 
+  }
 
   // Fetch the parameters and proxy them
   var parameters = {};
