@@ -287,8 +287,20 @@ function shouldPreventDefault(event) {
   }
 };
 
-['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(function(event) {
-  Module.canvas.addEventListener(event, function(event) {
-    worker.postMessage({ target: 'canvas', event: cloneObject(event) });
-  }, false);
-});
+function pipeCanvasEvents(events, callback) {
+  if (!events) {
+    return;
+  }
+  if (!Array.isArray(events)) {
+    events = [ events ];
+  }
+
+  events.forEach(function(event) {
+    Module.canvas.addEventListener(event, function(ev) {
+      if (typeof callback === 'function') {
+        callback(ev);
+      }
+      worker.postMessage({ target: 'canvas', event: cloneObject(ev)});
+    }, false);
+  });
+}
