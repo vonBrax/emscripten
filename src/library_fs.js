@@ -5,7 +5,7 @@
  */
 
 mergeInto(LibraryManager.library, {
-  $FS__deps: ['__setErrNo', '$PATH', '$PATH_FS', '$TTY', '$MEMFS',
+  $FS__deps: ['$setErrNo', '$PATH', '$PATH_FS', '$TTY', '$MEMFS',
 #if LibraryManager.has('library_idbfs.js')
     '$IDBFS',
 #endif
@@ -111,7 +111,7 @@ FS.staticInit();` +
 
     handleFSError: function(e) {
       if (!(e instanceof FS.ErrnoError)) throw e + ' : ' + stackTrace();
-      return ___setErrNo(e.errno);
+      return setErrNo(e.errno);
     },
 
     //
@@ -1225,9 +1225,9 @@ FS.staticInit();` +
       }
       stream.stream_ops.allocate(stream, offset, length);
     },
-    mmap: function(stream, buffer, offset, length, position, prot, flags) {
+    mmap: function(stream, address, length, position, prot, flags) {
 #if CAN_ADDRESS_2GB
-      offset >>>= 0;
+      address >>>= 0;
 #endif
       // User requests writing to file (prot & PROT_WRITE != 0).
       // Checking if we have permissions to write to the file unless
@@ -1246,7 +1246,7 @@ FS.staticInit();` +
       if (!stream.stream_ops.mmap) {
         throw new FS.ErrnoError({{{ cDefine('ENODEV') }}});
       }
-      return stream.stream_ops.mmap(stream, buffer, offset, length, position, prot, flags);
+      return stream.stream_ops.mmap(stream, address, length, position, prot, flags);
     },
     msync: function(stream, buffer, offset, length, mmapFlags) {
 #if CAN_ADDRESS_2GB
@@ -1559,7 +1559,7 @@ FS.staticInit();` +
       if (ret.exists) {
         return ret.object;
       } else {
-        ___setErrNo(ret.error);
+        setErrNo(ret.error);
         return null;
       }
     },
@@ -1714,7 +1714,7 @@ FS.staticInit();` +
       } else {
         throw new Error('Cannot load without read() or XMLHttpRequest.');
       }
-      if (!success) ___setErrNo({{{ cDefine('EIO') }}});
+      if (!success) setErrNo({{{ cDefine('EIO') }}});
       return success;
     },
     // Creates a file record for lazy-loading from a URL. XXX This requires a synchronous

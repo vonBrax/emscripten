@@ -61,7 +61,8 @@
 // exceed its size, whether all allocations (stack and static) are
 // of positive size, etc., whether we should throw if we encounter a bad __label__, i.e.,
 // if code flow runs into a fault
-// ASSERTIONS == 2 gives even more runtime checks
+// ASSERTIONS == 2 gives even more runtime checks, that may be very slow. That
+// includes internal dlmalloc assertions.
 var ASSERTIONS = 1;
 
 // Whether extra logging should be enabled.
@@ -92,6 +93,9 @@ var INVOKE_RUN = 1;
 // like flushing the stdio streams.
 // Set this to 1 if you do want atexit()s or stdio streams to be flushed
 // on exit.
+// This setting is controlled automatically in STANDALONE_WASM mode:
+//  - For a command (has a main function) this is always 1
+//  - For a reactor (no a main function) this is always 0
 var EXIT_RUNTIME = 0;
 
 // How to represent the initial memory content.
@@ -128,6 +132,19 @@ var MALLOC = "dlmalloc";
 // how big that initial allocation (INITIAL_MEMORY) must be.
 // If you set this to 0, then you get the standard malloc behavior of
 // returning NULL (0) when it fails.
+//
+// Setting ALLOW_MEMORY_GROWTH turns this off, as in that mode we default to
+// the behavior of trying to grow and returning 0 from malloc on failure, like
+// a standard system would. However, you can still set this flag to override
+// that.
+//    * This is a mostly-backwards-compatible change. Previously this option
+//      was ignored when growth was on. The current behavior is that growth
+//      turns it off by default, so for users that never specified the flag
+//      nothing changes. But if you do specify it, it will have an effect now,
+//      which it did not previously. If you don't want that, just stop passing
+//      it in at link time.
+//
+// [link]
 var ABORTING_MALLOC = 1;
 
 // If 1, generated a version of memcpy() and memset() that unroll their
@@ -268,14 +285,6 @@ var WARN_UNALIGNED = 0;
 // With upstream backend and WASM=0, JS output always uses Math.fround for consistent
 // behavior with WebAssembly.
 var PRECISE_F32 = 0;
-
-// Whether to allow autovectorized SIMD code
-// (https://github.com/johnmccutchan/ecmascript_simd).  SIMD intrinsics are
-// always compiled to SIMD code, so you only need this option if you also want
-// the autovectorizer to run.  Note that SIMD support in browsers is not yet
-// there (as of Sep 2, 2014), so you will be running in a polyfill, which is not
-// fast.
-var SIMD = 0;
 
 // Whether closure compiling is being run on this output
 var USE_CLOSURE_COMPILER = 0;
@@ -473,6 +482,18 @@ var GL_EXTENSIONS_IN_PREFIXED_FORMAT = 1;
 // you will need to manually enable the extensions you need.
 var GL_SUPPORT_AUTOMATIC_ENABLE_EXTENSIONS = 1;
 
+// If true, the function emscripten_webgl_enable_extension() can be called to
+// enable any WebGL extension. If false, to save code size,
+// emscripten_webgl_enable_extension() cannot be called to enable any of extensions
+// 'ANGLE_instanced_arrays', 'OES_vertex_array_object', 'WEBGL_draw_buffers' or
+// 'WEBGL_draw_instanced_base_vertex_base_instance', but the dedicated functions
+// emscripten_webgl_enable_*() found in html5.h are used to enable each of those
+// extensions. This way code size is increased only for the extensions that are
+// actually used.
+// N.B. if setting this to 0, GL_SUPPORT_AUTOMATIC_ENABLE_EXTENSIONS must be set
+// to zero as well.
+var GL_SUPPORT_SIMPLE_ENABLE_EXTENSIONS = 1;
+
 // If set to 0, Emscripten GLES2->WebGL translation layer does not track the kind
 // of GL errors that exist in GLES2 but do not exist in WebGL. Settings this to 0
 // saves code size. (Good to keep at 1 for development)
@@ -590,14 +611,22 @@ var LEGACY_VM_SUPPORT = 0;
 // in node.js, or in a JS shell like d8, js, or jsc. You can set this option to
 // specify that the output should only run in one particular environment, which
 // must be one of
-//    'web'    - the normal web environment.
-//    'worker' - a web worker environment.
-//    'node'   - Node.js.
-//    'shell'  - a JS shell like d8, js, or jsc.
+//    'web'     - the normal web environment.
+//    'webview' - just like web, but in a webview like Cordova;
+//                considered to be same as "web" in almost every place
+//    'worker'  - a web worker environment.
+//    'node'    - Node.js.
+//    'shell'   - a JS shell like d8, js, or jsc.
 // Or it can be a comma-separated list of them, e.g., "web,worker". If this is
 // the empty string, then all runtime environments are supported.
-// (There is also a 'pthread' environment, see shell.js, but it cannot be specified
-// manually yet TODO)
+//
+// Note that the set of environments recognized here is not identical to the
+// ones we identify at runtime using ENVIRONMENT_IS_*. Specifically:
+//  * We detect whether we are a pthread at runtime, but that's set for workers
+//    and not for the main file so it wouldn't make sense to specify here.
+//  * The webview target is basically a subset of web. It must be specified
+//    alongside web (e.g. "web,webview") and we only use it for code generation
+//    at compile time, there is no runtime behavior change.
 var ENVIRONMENT = '';
 
 // Enable this to support lz4-compressed file packages. They are stored compressed in memory, and
@@ -626,7 +655,7 @@ var LZ4 = 0;
 // DISABLE_EXCEPTION_CATCHING = 0 - generate code to actually catch exceptions
 // DISABLE_EXCEPTION_CATCHING = 1 - disable exception catching at all
 // DISABLE_EXCEPTION_CATCHING = 2 - disable exception catching, but enables
-//                                  catching in whitelist
+//                                  catching in list of allowed functions
 // XXX note that this removes *catching* of exceptions, which is the main
 //     issue for speed, but you should build source files with
 //     -fno-exceptions to really get rid of all exceptions code overhead,
@@ -639,7 +668,7 @@ var DISABLE_EXCEPTION_CATCHING = 1;
 // Enables catching exception in the listed functions only, if
 // DISABLE_EXCEPTION_CATCHING = 2 is set
 // [compile+link] - affects user code at compile and system libraries at link
-var EXCEPTION_CATCHING_WHITELIST = [];
+var EXCEPTION_CATCHING_ALLOWED = [];
 
 // By default we handle exit() in node, by catching the Exit exception. However,
 // this means we catch all process exceptions. If you disable this, then we no
@@ -662,10 +691,10 @@ var NODEJS_CATCH_REJECTION = 1;
 // This allows to inject some async functions to the C code that appear to be sync
 // e.g. emscripten_sleep
 // On fastcomp this uses the Asyncify IR transform.
-// On upstream this uses the Asyncify pass in Binaryen. TODO: whitelist, coroutines
+// On upstream this uses the Asyncify pass in Binaryen.
 var ASYNCIFY = 0;
 
-// Imports which can do a sync operation, in addition to the default ones that
+// Imports which can do an sync operation, in addition to the default ones that
 // emscripten defines like emscripten_sleep. If you add more you will need to
 // mention them to here, or else they will not work (in ASSERTIONS builds an
 // error will be shown).
@@ -685,7 +714,7 @@ var ASYNCIFY_IGNORE_INDIRECT = 0;
 // In that case, you should increase this size.
 var ASYNCIFY_STACK_SIZE = 4096;
 
-// If the Asyncify blacklist is provided, then the functions in it will not
+// If the Asyncify remove-list is provided, then the functions in it will not
 // be instrumented even if it looks like they need to. This can be useful
 // if you know things the whole-program analysis doesn't, like if you
 // know certain indirect calls are safe and won't unwind. But if you
@@ -706,13 +735,22 @@ var ASYNCIFY_STACK_SIZE = 4096;
 // builds, etc.). You can inspect the wasm binary to look for the actual names,
 // either directly or using wasm-objdump or wasm-dis, etc.
 // Simple '*' wildcard matching is supported.
-var ASYNCIFY_BLACKLIST = [];
+var ASYNCIFY_REMOVE = [];
 
-// If the Asyncify whitelist is provided, then *only* the functions in the list
-// will be instrumented. Like the blacklist, getting this wrong will break
+// Functions in the Asyncify add-list are added to the list of instrumented
+// functions, that is, they will be instrumented even if otherwise asyncify
+// thinks they don't need to be. As by default everything will be instrumented
+// in the safest way possible, this is only useful if you use IGNORE_INDIRECT
+// and use this list to fix up some indirect calls that *do* need to be
+// instrumented.
+// See notes on ASYNCIFY_REMOVE about the names.
+var ASYNCIFY_ADD = [];
+
+// If the Asyncify only-list is provided, then *only* the functions in the list
+// will be instrumented. Like the remove-list, getting this wrong will break
 // your application.
-// See notes on ASYNCIFY_BLACKLIST about the names.
-var ASYNCIFY_WHITELIST = [];
+// See notes on ASYNCIFY_REMOVE about the names.
+var ASYNCIFY_ONLY = [];
 
 // Allows lazy code loading: where emscripten_lazy_load_code() is written, we
 // will pause execution, load the rest of the code, and then resume.
@@ -815,10 +853,9 @@ var NODERAWFS = 0;
 // The V8 version used in node is included in the cache name so that we don't
 // try to load cached code from another version, which fails silently (it seems
 // to load ok, but we do actually recompile).
-//  * This requires a somewhat recent node, but unclear what version, see
-//    https://github.com/nodejs/node/issues/18265#issuecomment-471237531
-//  * This option requires WASM_ASYNC_COMPILATION=0 (we load and save code
-//    in the sync compilation path for simplicity).
+//  * The only version known to work for sure is node 12.9.1, as this has
+//    regressed, see
+//    https://github.com/nodejs/node/issues/18265#issuecomment-622971547
 //  * The default location of the .cached files is alongside the wasm binary,
 //    as mentioned earlier. If that is in a read-only directory, you may need
 //    to place them elsewhere. You can use the locateFile() hook to do so.
@@ -925,7 +962,7 @@ var PROXY_TO_WORKER_FILENAME = '';
 //
 // This proxies Module['canvas'], if present, and if OFFSCREEN_CANVAS support
 // is enabled. This has to happen because this is the only chance - this browser
-// main thread does the the only pthread_create call that happens on
+// main thread does the only pthread_create call that happens on
 // that thread, so it's the only chance to transfer the canvas from there.
 var PROXY_TO_PTHREAD = 0;
 
@@ -951,6 +988,7 @@ var LINKABLE = 0;
 //   * IGNORE_MISSING_MAIN is disabled.
 //   * AUTO_JS_LIBRARIES is disabled.
 //   * AUTO_ARCHIVE_INDEXES is disabled.
+//   * DEFAULT_TO_CXX is disabled.
 // [compile+link]
 var STRICT = 0;
 
@@ -1005,32 +1043,46 @@ var DETERMINISTIC = 0;
 
 // By default we emit all code in a straightforward way into the output
 // .js file. That means that if you load that in a script tag in a web
-// page, it will use the global scope. With MODULARIZE set, we will instead emit
+// page, it will use the global scope. With `MODULARIZE` set, we instead emit
+// the code wrapped in a function that returns a promise. The promise is
+// resolved with the module instance when it is safe to run the compiled code,
+// similar to the `onRuntimeInitialized` callback. You do not need to use the
+// `onRuntimeInitialized` callback when using `MODULARIZE`.
+// 
+// The default name of the function is `Module`, but can be changed using the
+// `EXPORT_NAME` option. We recommend renaming it to a more typical name for a
+// factory function, e.g. `createModule`.
 //
-//   var EXPORT_NAME = function(Module) {
-//     Module = Module || {};
-//     // .. all the emitted code from emscripten ..
-//     return Module;
-//   };
 //
-// where EXPORT_NAME is from the option of the same name (so, by default
-// it will be var Module = ..., and so you should change EXPORT_NAME if
-// you want more than one module in the same web page).
+// You use the factory function like so:
 //
-// You can then use this by something like
+//   const module = await EXPORT_NAME();
+//   
+// or:
 //
-//   var instance = EXPORT_NAME();
+//   let module;
+//   EXPORT_NAME().then(instance => {
+//     module = instance;
+//   });
+//   
 //
-// or
+// The factory function accepts 1 parameter, an object with default values for
+// the module instance:
 //
-//   var instance = EXPORT_NAME({ option: value, ... });
+//   const module = await EXPORT_NAME({ option: value, ... });
 //
 // Note the parentheses - we are calling EXPORT_NAME in order to instantiate
-// the module. (This allows, in particular, for you to create multiple
-// instantiations, etc.)
+// the module. This allows you to create multiple instances of the module.
 //
-// The default .html shell file provided in MINIMAL_RUNTIME mode shows
-// an example to how the module is instantiated from within the html file.
+// Note that in MODULARIZE mode we do *not* look for a global `Module` object
+// for default values. Default values must be passed as a parameter to the
+// factory function.
+//
+// The default .html shell file provided in MINIMAL_RUNTIME mode will create
+// a singleton instance automatically, to run the application on the page.
+// (Note that it does so without using the Promise API mentioned earlier, and
+// so code for the Promise is not even emitted in the .js file if you tell
+// emcc to emit an .html output.)
 // The default .html shell file provided by traditional runtime mode is only
 // compatible with MODULARIZE=0 mode, so when building with traditional
 // runtime, you should provided your own html shell file to perform the
@@ -1038,41 +1090,15 @@ var DETERMINISTIC = 0;
 // https://github.com/emscripten-core/emscripten/issues/7950)
 //
 // If you add --pre-js or --post-js files, they will be included inside
-// the module with the rest of the emitted code. That way, they can be
-// optimized together with it. (If you want something outside of the module,
-// that is, literally before or after all the code including the extra
-// MODULARIZE code, you can do that by modifying the JS yourself after
-// emscripten runs. While --pre-js and --post-js happen to do that in
-// non-modularize mode, their big feature is that they add code to be
-// optimized with the rest of the emitted code, allowing better dead code
-// elimination and minification.)
+// the factory function with the rest of the emitted code in order to be
+// optimized together with it.
 //
-// Modularize also provides a promise-like API,
-//
-//   var instance = EXPORT_NAME().then(function(Module) { .. });
-//
-// The callback is called when it is safe to run compiled code, similar
-// to the onRuntimeInitialized callback (i.e., it waits for all
-// necessary async events). It receives the instance as a parameter,
-// for convenience.
-//
-// Note that in MODULARIZE mode we do *not* look at the global `Module`
-// object, so if you define things there they will be ignored. The reason
-// is that you will be constructing the instances manually, and can
-// provide Module there, or something else, as you want. This differs
-// in MODULARIZE_INSTANCE mode, where we *do* look at the global, since
-// as in non-MODULARIZE mode there is just one global instance, and it
-// is constructed by the setup code.
+// If you want to include code outside all of the generated code, including the
+// factory function, you can use --extern-pre-js or --extern-post-js. While
+// --pre-js and --post-js happen to do that in non-MODULARIZE mode, their
+// intended usage is to add code that is optimized with the rest of the emitted
+// code, allowing better dead code elimination and minification.
 var MODULARIZE = 0;
-
-// Similar to MODULARIZE, but while that mode exports a function, with which you
-// can create multiple instances, this option exports a singleton instance. In
-// other words, it's the same as if you used MODULARIZE and did EXPORT_NAME =
-// EXPORT_NAME() to create the instance manually.
-//
-// Note that the promise-like API MODULARIZE provides isn't available here
-// (since you aren't creating the instance yourself).
-var MODULARIZE_INSTANCE = 0;
 
 // If we separate out asm.js with the --separate-asm option,
 // this is the name of the variable where the generated asm.js
@@ -1107,15 +1133,6 @@ var ASM_JS = 1;
 // optimizer sees 5.0 as just 5).
 // [fastcomp-only]
 var FINALIZE_ASM_JS = 1;
-
-// If 1, then all exports from the asm/wasm module will be accessed indirectly,
-// which allow the module to be swapped later, simply by replacing
-// Module['asm'].
-//
-// Note: It is very important that the replacement module be built with the same
-// optimizations and so forth, as we depend on them being a drop-in replacement
-// for each other (same globals on the heap at the same locations, etc.)
-var SWAPPABLE_ASM_MODULE = 0;
 
 // see emcc --separate-asm
 // [fastcomp-only]
@@ -1156,48 +1173,6 @@ var EXPORT_NAME = 'Module';
 // to warnings instead of throwing an exception.
 var DYNAMIC_EXECUTION = 1;
 
-// Runs tools/emterpretify on the compiler output.
-// [fastcomp-only]
-var EMTERPRETIFY = 0;
-
-// If defined, a file to write bytecode to, otherwise the default is to embed it
-// in text JS arrays (which is less efficient).  When emitting HTML, we
-// automatically generate code to load this file and set it to
-// Module.emterpreterFile. If you emit JS, you need to make sure that
-// Module.emterpreterFile contains an ArrayBuffer with the bytecode, when the
-// code loads.  Note: You might need to quote twice in the shell, something like
-// -s 'EMTERPRETIFY_FILE="waka"'
-// [fastcomp-only]
-var EMTERPRETIFY_FILE = '';
-
-// Functions to not emterpret, that is, to run normally at full speed
-// [fastcomp-only]
-var EMTERPRETIFY_BLACKLIST = [];
-
-// If this contains any functions, then only the functions in this list are
-// emterpreted (as if all the rest are blacklisted; this overrides the
-// BLACKLIST)
-// [fastcomp-only]
-var EMTERPRETIFY_WHITELIST = [];
-
-// Allows sync code in the emterpreter, by saving the call stack, doing an async
-// delay, and resuming it
-// [fastcomp-only]
-var EMTERPRETIFY_ASYNC = 0;
-
-// Performs a static analysis to suggest which functions should be run in the
-// emterpreter, as it appears they can be on the stack when a sync function is
-// called in the EMTERPRETIFY_ASYNC option.  After showing the suggested list,
-// compilation will halt. You can apply the provided list as an emcc argument
-// when compiling later.
-// [fastcomp-only]
-var EMTERPRETIFY_ADVISE = 0;
-
-// If you have additional custom synchronous functions, add them to this list
-// and the advise mode will include them in its analysis.
-// [fastcomp-only]
-var EMTERPRETIFY_SYNCLIST = [];
-
 // whether js opts will be run, after the main compiler
 var RUNNING_JS_OPTS = 0;
 
@@ -1226,6 +1201,9 @@ var USE_GLFW = 2;
 // In that build mode, two files a.wasm and a.wasm.js are produced, and at runtime
 // the WebAssembly file is loaded if browser/shell supports it. Otherwise the
 // .wasm.js fallback will be used.
+//
+// If WASM=2 is enabled and the browser fails to compile the WebAssembly module,
+// the page will be reloaded in Wasm2JS mode.
 var WASM = 1;
 
 // STANDALONE_WASM indicates that we want to emit a wasm file that can run without
@@ -1251,6 +1229,14 @@ var WASM = 1;
 // environments the expectation is to create the memory in the wasm itself.
 // Doing so prevents some possible JS optimizations, so we only do it behind
 // this flag.
+//
+// When this flag is set we do not legalize the JS interface, since the wasm is
+// meant to run in a wasm VM, which can handle i64s directly. If we legalized it
+// the wasm VM would not recognize the API. However, this means that the
+// optional JS emitted won't run if you use a JS API with an i64. You can use
+// the WASM_BIGINT option to avoid that problem by using BigInts for i64s which
+// means we don't need to legalize for JS (but this requires a new enough JS
+// VM).
 var STANDALONE_WASM = 0;
 
 // Whether to use the WebAssembly backend that is in development in LLVM.  You
@@ -1284,22 +1270,9 @@ var BINARYEN_IGNORE_IMPLICIT_TRAPS = 0;
 // [fastcomp-only]
 var BINARYEN_TRAP_MODE = "allow";
 
-// A comma-separated list of passes to run in the binaryen optimizer, for
-// example, "dce,precompute,vacuum".  When set, this overrides/replaces
-// the default passes we would normally run.
-// Note that you can put any binaryen wasm-opt flag here, not just
-// passes. The key thing is that these flags are sent to the main wasm-opt
-// invocation to optimize the wasm binary, which is when we run several
-// important passes. We may also run wasm-opt for various other reasons,
-// like as part of metadce, and these flags are not passed at those times,
-// so they are a bunch of passes (+ other flags) for that one main
-// invocation.
-var BINARYEN_PASSES = "";
-
-// A comma-separated list of passes to run in the binaryen optimizer, like
-// BINARYEN_PASSES, but that is in addition to any default ones. That is,
-// setting this does not override/replace the default passes, and it is
-// appended at the end of the list of passes.
+// A comma-separated list of extra passes to run in the binaryen optimizer,
+// Setting this does not override/replace the default passes. It is appended at
+// the end of the list of passes.
 var BINARYEN_EXTRA_PASSES = "";
 
 // Whether to compile the wasm asynchronously, which is more efficient and does
@@ -1338,7 +1311,6 @@ var EMIT_PRODUCERS_SECTION = 0;
 var EMIT_EMSCRIPTEN_METADATA = 0;
 
 // Emits emscripten license info in the JS output.
-// [upstream-only]
 var EMIT_EMSCRIPTEN_LICENSE = 0;
 
 // Whether to legalize the JS FFI interfaces (imports/exports) by wrapping them
@@ -1611,8 +1583,8 @@ var ASMFS = 0;
 //
 // When using code that depends on this option, your Content Security Policy may
 // need to be updated. Specifically, embedding asm.js requires the script-src
-// directive to whitelist 'unsafe-inline', and using a Worker requires the
-// child-src directive to whitelist blob:. If you aren't using Content Security
+// directive to allow 'unsafe-inline', and using a Worker requires the
+// child-src directive to allow blob:. If you aren't using Content Security
 // Policy, or your CSP header doesn't include either script-src or child-src,
 // then you can safely ignore this warning.
 var SINGLE_FILE = 0;
@@ -1776,12 +1748,29 @@ var USE_OFFSET_CONVERTER = 0;
 
 // If set to 1, the JS compiler is run before wasm-ld so that the linker can
 // report undefined symbols within the binary.  Without this option that linker
-// doesn't know which symmbols might be defined JS and so reporting of undefined
-// symbols is deleyed until the JS compiler is run.
-// There are some known issues with this flag.  e.g. EM_JS function:
-// https://github.com/emscripten-core/emscripten/issues/10779
+// doesn't know which symbols might be defined JS and so reporting of undefined
+// symbols is delayed until the JS compiler is run.
 // [link]
 var LLD_REPORT_UNDEFINED = 0;
+
+// Default to c++ mode even when run as `emcc` rather then `emc++`.
+// When this is disabled `em++` is required when compiling and linking C++
+// programs. This which matches the behaviour of gcc/g++ and clang/clang++.
+var DEFAULT_TO_CXX = 1;
+
+// While LLVM's wasm32 has long double = float128, we don't support printing
+// that at full precision by default. Instead we print as 64-bit doubles, which
+// saves libc code size. You can flip this option on to get a libc with full
+// long double printing precision.
+var PRINTF_LONG_DOUBLE = 0;
+
+// Run wabt's wasm2c tool on the final wasm, and combine that with a C runtime,
+// resulting in a .c file that you can compile with a C compiler to get a
+// native executable that works the same as the normal js+wasm. This will also
+// emit the wasm2c .h file. The output filenames will be X.wasm.c, X.wasm.h
+// if your output is X.js or X.wasm (note the added .wasm. we make sure to emit,
+// which avoids trampling a C file).
+var WASM2C = 0;
 
 //===========================================
 // Internal, used for testing only, from here
@@ -1835,4 +1824,9 @@ var LEGACY_SETTINGS = [
   ['TOTAL_MEMORY', 'INITIAL_MEMORY'],
   ['WASM_MEM_MAX', 'MAXIMUM_MEMORY'],
   ['BINARYEN_MEM_MAX', 'MAXIMUM_MEMORY'],
+  ['BINARYEN_PASSES', [''], 'Use BINARYEN_EXTRA_PASSES to add additional passes'],
+  ['SWAPPABLE_ASM_MODULE', [0], 'Fully swappable asm modules are no longer supported'],
+  ['ASYNCIFY_WHITELIST', 'ASYNCIFY_ONLY'],
+  ['ASYNCIFY_BLACKLIST', 'ASYNCIFY_REMOVE'],
+  ['EXCEPTION_CATCHING_WHITELIST', 'EXCEPTION_CATCHING_ALLOWED'],
 ];

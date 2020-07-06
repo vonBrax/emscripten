@@ -24,6 +24,9 @@ function run() {
 #if EXIT_RUNTIME
     callRuntimeCallbacks(__ATEXIT__);
     {{{ getQuoted('ATEXITS') }}}
+#if USE_PTHREADS
+    PThread.runExitHandlers();
+#endif
 #endif
 
 #if IN_TEST_HARNESS
@@ -56,12 +59,12 @@ function initRuntime(asm) {
 #endif
   Module['HEAPU32'] = HEAPU32;
   Module['dynCall_ii'] = dynCall_ii;
-  Module['__register_pthread_ptr'] = __register_pthread_ptr;
+  Module['registerPthreadPtr'] = registerPthreadPtr;
   Module['_pthread_self'] = _pthread_self;
 
   if (ENVIRONMENT_IS_PTHREAD) return;
   // Pass the thread address inside the asm.js scope to store it for fast access that avoids the need for a FFI out.
-  __register_pthread_ptr(PThread.mainThreadBlock, /*isMainBrowserThread=*/!ENVIRONMENT_IS_WORKER, /*isMainRuntimeThread=*/1);
+  registerPthreadPtr(PThread.mainThreadBlock, /*isMainBrowserThread=*/!ENVIRONMENT_IS_WORKER, /*isMainRuntimeThread=*/1);
   _emscripten_register_main_browser_thread_id(PThread.mainThreadBlock);
 #endif
 
@@ -221,11 +224,27 @@ WebAssembly.instantiate(Module['wasm'], imports).then(function(output) {
 #endif
 
 })
-#if ASSERTIONS
+#if ASSERTIONS || WASM == 2
 .catch(function(error) {
+#if ASSERTIONS
   console.error(error);
-})
 #endif
+
+#if WASM == 2
+#if ENVIRONMENT_MAY_BE_NODE || ENVIRONMENT_MAY_BE_SHELL
+  if (typeof location !== 'undefined') {
+#endif
+    // WebAssembly compilation failed, try running the JS fallback instead.
+    var search = location.search;
+    if (search.indexOf('_rwasm=0') < 0) {
+      location.href += (search ? search + '&' : '?') + '_rwasm=0';
+    }
+#if ENVIRONMENT_MAY_BE_NODE || ENVIRONMENT_MAY_BE_SHELL
+  }
+#endif
+#endif // WASM == 2
+})
+#endif // ASSERTIONS || WASM == 2
 ;
 
 #else

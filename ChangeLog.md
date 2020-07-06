@@ -17,16 +17,175 @@ See docs/process.md for how version tagging works.
 
 Current Trunk
 -------------
+- Rename `EXCEPTION_CATCHING_WHITELIST` to `EXCEPTION_CATCHING_ALLOWED`. The
+  functionality is unchanged, and the old name will be allowed as an alias
+  for a few releases to give users time to migrate.
+- Add support for the new add-list in Asyncify and update existing list names
+  following the updates in Binaryen, so that now we have `ASYNCIFY_ADD` to
+  add a function, `ASYNCIFY_REMOVE` to remove one (previously this was
+  called `ASYNCIFY_BLACKLIST`), and `ASYNCIFY_ONLY` to set a list of the
+  only functions to instrument and no others (previously this was called
+  `ASYNCIFY_WHITELIST`). The updated lists also handle indirect calls properly,
+  so that if you use `ASYNCIFY_IGNORE_INDIRECT` and then add (using either the
+  add-list or the only-list) all the functions that are on the stack when
+  pausing, then things will work (for more, see
+  https://github.com/WebAssembly/binaryen/pull/2913).
+
+1.39.18: 06/12/2020
+-------------------
+- Disable `LIBCXX_ABI_OPTIMIZED_FUNCTION` which is an ABI change in libc++
+  (changing the layout of the `std::function` object) (#11403).
+- New `WASM2C` option that integrates with wabt's wasm2c tool in order to
+  compile everything into a single C file (#11213).
+
+1.39.17: 06/05/2020
+-------------------
+- Use Promise polyfill for MODULARIZE when supporting legacy browsers. (#11320)
+- Fix minification of wasm2js output when using --emit-symbol-map. (#11279)
+- On first use, emscripten creates a sample config file.  This config file
+  is now created in the emscripten directory by default.  The traditional
+  `~/.emscripten` config file in the `$HOME` directory is still supported and
+  the sample config will still be written there in the case that the emscripten
+  root is read-only.
+- The default location for downloaded ports is now a directory called "ports"
+  within the cache directory.  In practice these means by default they live
+  in `cache/ports` inside the emscripten source directory.  This can be
+  controlled by setting the location of the cache directory, or for even more
+  fine grained control the `EM_PORTS` environment variable and the `PORTS`
+  config setting can be used.
+- Added support for compiling SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE 4.2 and
+  128-bit wide AVX intrinsics, emulated on top of Wasm SIMD instruction set.
+  (#11193, #11243, #11290, #11327). Pass -msimd128 -msse<version> to enable
+  targeting SSE.
+- Removed obsolete SIMD.js support (-s SIMD=1). Use -msimd128 to target Wasm
+  SIMD. (#11180)
+- Add warning about fastcomp deprecation (can be disabled via `-Wno-fastcomp`).
+- The mmap method of JavaScript filesystem drivers (based on library_fs.js) no
+  longer takes a target memory.  It's safer/cleaner/smaller to assume the target
+  is the global memory buffer.
+- Remove emterpreter and `EMTERPRETIFY` settings.  Emterpreter has largely
+  been replaced by asyncify and is fastcomp only so due for removing in
+  the near future anyway.
+- Upgrade various musl string functions to 1.2 to fix aliasing issues. (#11215)
+
+1.39.16: 05/15/2020
+-------------------
+- Add Math C API for direct access to JavaScript Math object (#11151).
+- Address Sanitizer support now includes JavaScript as well, that is, memory
+  access of HEAP\* arrays is checked by ASan. That allows errors to be found if
+  JS glue code does something wrong like forget to shift a pointer. To use this,
+  just build with ASan normally, `-fsanitize=address` at link (#11147).
+- Fix embind string conversions in multithreaded builds (#10844).
+- `ALLOW_MEMORY_GROWTH` used to silently disable `ABORTING_MALLOC`. It now
+  just changes the default, which means you can pass `-s ABORTING_MALLOC=1` to
+  override the default, which was not possible before. (If you pass the flag
+  and don't want that behavior, stop passing the flag.) (#11131)
+- Change the factory function created by using the `MODULARIZE` build option to
+  return a Promise instead of the module instance. That is, beforehand
+
+        Module()
+
+  would return an instance (which was perhaps not ready yet if startup was
+  async). In the new model, that returns a Promise which you can do `.then` or
+  `await` on to get notified when the instance is ready, and the callback
+  receives the instance. Note that both before and after this change
+  doing `Module()` creates and runs an instance, so the only change is
+  the return value from that call.
+  This fixes some long-standing bugs with that option which have been reported
+  multiple times, but is a breaking change - sorry about that. To reduce the
+  risk of confusing breakage, in a build with `ASSERTIONS` we will show a clear
+  warning on common errors. For more, see detailed examples for the current
+  usage in `src/settings.js` on `MODULARIZE`. (#10697)
+- A new `PRINTF_LONG_DOUBLE` option allows printf to print long doubles at full
+  float128 precision. (#11130)
+- `emscripten_async_queue_on_thread` has been renamed to
+  `emscripten_dispatch_to_thread` which no longer implies that it is async -
+  the operation is in fact only async if it is sent to another thread, while it
+  is sync if on the same one. A new `emscripten_dispatch_to_thread_async`
+  function is added which is always async.
+- The emscripten cache now lives in a directory called `cache` at the root
+  of the emscripten tree by default.  The `CACHE` config setting and the
+  `EM_CACHE` environment variable can be used to override this (#11126).
+- Honor `CACHE` setting in config file as an alternative to `EM_CACHE`
+  environment variable.
+- Remove `--cache` command line arg.  The `CACHE` config setting and the
+  `EM_CACHE` environment variable can be used to control this.
+- Compiling to a file with no suffix will now generate an executable (JS) rather
+  than an object file.  This means simple cases like `emcc -o foo foo.c` do the
+  expected thing and generate an executable.
+- System libraries such as libc and libc++ are now included by default at
+  link time rather than selectively included based on the symbols used in the
+  input object files.  For small programs that don't use any system libraries
+  this might result in slightly slower link times with the old fastcomp
+  backend.  In order to exclude these libraries build with `-nostdlib` and/or
+  `-nostdlib++`.
+
+1.39.15: 05/06/2020
+-------------------
+- Add `--extern-pre-js` and `--extern-post-js` emcc flags. Files provided there
+  are prepended/appended to the final JavaScript output, *after* all other
+  work has been done, including optimization, optional `MODULARIZE`-ation,
+  instrumentation like `SAFE_HEAP`, etc. They are the same as prepending/
+  appending those files after `emcc` finishes running, and are just a convenient
+  way to do that. (For comparison, `--pre-js` and `--post-js` optimize that code
+  together with everything else, keep it in the same scope if running
+  `MODULARIZE`, etc.).
+- Stop defining `FE_INEXACT` and other floating point exception macros in libc,
+  since we don't support them. That also prevents musl from including code using
+  pragmas that don't make sense for wasm. Ifdef out other uses of those pragmas
+  as well, as tip of tree LLVM now fails to compile them on wasm. (#11087)
+- Update libcxx and libcxxabi to LLVM 10 release branch (#11038).
+- Remove `BINARYEN_PASSES` setting (#11057). We still have
+  `BINARYEN_EXTRA_PASSES` (the removed setting completely overrides the set
+  of passes from the command line, which doesn't make much sense as some of
+  them are mandatory like setting the sbrk ptr).
+- Remove `MODULARIZE_INSTANCE` build option (#11037). This was a seldom used
+  option that was complicating the logic for `MODULARIZE`. Module instances can
+  be created by using `MODULARIZE` and calling the factory function explicitly.
+  See the new `--extern-post-js` option added in this release, which can help
+  code that used `MODULARIZE_INSTANCE` (you can add an extern post js which
+  does `Module = Module();` for example).
+
+1.39.14: 05/01/2020
+-------------------
+- Update SDL2 to latest in ports, which has recently been updated to include
+  upstream 2.0.10.
+- Add warning on use of `EMTERPRETIFY` which is soon to be removed.
+- Emscripten can now compile assembly files in llvm's .s/.S file format.
+- Remove test-only environment variable handling for `EMCC_LEAVE_INPUTS_RAW`.
+  The two uses cases in our test code were covered by the `-nostdlib` option.
+- Remove untested `CONFIGURE_CC`.  This could be used to override the underlying
+  compiler used in emcc/em++ but only during configure tests.  There are other
+  ways to control/fake the detected configure features that don't require such
+  monkey patching. For example setting defaults via a site file:
+  https://www.gnu.org/software/autoconf/manual/autoconf-2.67/html_node/Site-Defaults.html
+- Remove undocumented and untested config settings: `COMPILER_OPTS`.  This was
+  a global setting in the emscripten config file that would inject extra
+  compiler options.
+- Allow spaces in a path to Python interpreter when running emscripten from Unix
+  shell (#11005).
+- Support atexit() in standalone mode (#10995). This also fixes stdio stream
+  flushing on exit in that mode.
+
+v1.39.13: 04/17/2020
+--------------------
+- Support for WebAssembly BigInt integration with a new `WASM_BIGINT` flag. With
+  that the VM will use a JS BigInt for a wasm i64, avoiding the need for JS
+  legalization. See #10860.
+- Add another value for ENVIRONMENT named 'webview' - it is a companion
+  option for 'web' and enables some additional compatibility checks
+  so that generated code works both in normal web and in a webview like Cordova.
+  See #10846
 
 v1.39.12: 04/09/2020
 --------------------
-- Pass linker flags dirctly to wasm-ld by default.  We still filter out certain
-  flags explcitly.  If there are other flags that it would be useful for us
+- Pass linker flags directly to wasm-ld by default.  We still filter out certain
+  flags explicitly.  If there are other flags that it would be useful for us
   to ignore we can add them to the list of ignored flags.
 - Optionally support 2GB+ heap sizes. To do this we make the JS code have unsigned
   pointers (we need all 32 bits in them now), which can slightly increase code
   size (>>> instead of >>). This only happens when the heap size may be over
-  2GB, which you must opt into explicity, by setting `MAXIMUM_MEMORY` to a
+  2GB, which you must opt into explicitly, by setting `MAXIMUM_MEMORY` to a
   higher value (i.e. by default you do not get support for 2GB+ heaps).
   See #10601
 - `--llvm-lto` flag is now ignored when using the upstream llvm backend.
@@ -115,13 +274,15 @@ v1.39.9: 03/05/2020
   EmscriptenWebGLContextAttributes::powerPreference instead. (#10505)
 - When implementing forwarding function aliases in JS libraries, either the
   alias or the target function must contain a signature annotation. (#10550)
-- Add an check in Asyncify builds with `ASSERTIONS` that we do not have
+- Add a check in Asyncify builds with `ASSERTIONS` that we do not have
   compiled code on the stack when starting to rewind, which is dangerous.
 - Implement libc system() for node.js (#10547).
 - Standalone mode improvements, time (#10530, #10536), sysconf (#10535),
   getpagesize (#10533), _Exit (#10534)
 - Fix many closure compiler warnings (e.g. #10525).
 - Avoid unnecessary syscall proxying (#10511).
+- Added new link time command line option -jsDfoo=val to allow specifying
+  custom preprocessor options to JS library files. (#10624, #10580)
 
 v1.39.8: 02/14/2020
 -------------------
@@ -343,6 +504,12 @@ v1.38.41: 08/07/2019
    print for parse error reporting. (#9088)
  - Internal API update: one can now specialize embind's (un)marshalling for a
    group of types via SFINAE, instead of a single type. (#9089)
+ - Options passed on the `Module` object during startup, like `Module.arguments`,
+   are now copied to a local (in order to avoid writing `Module.*` everywhere,
+   which wastes space). You can still provide them as always, but you can't
+   modify `Module.arguments` and other things *after* startup (which is now
+   after we've finished processing them). In a build with assertions enabled you
+   will get an error if you access those properties after startup. (#9072)
 
 v1.38.40: 07/24/2019
 --------------------

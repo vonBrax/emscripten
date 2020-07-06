@@ -80,7 +80,6 @@ In addition to the above, the following tips can help to reduce code size:
 - Use :ref:`the closure compiler <emcc-closure>` on the non-compiled code: ``--closure 1``. This can hugely reduce the size of the support JavaScript code, and is highly recommended. However, if you add your own additional JavaScript code (in a ``--pre-js``, for example) then you need to make sure it uses `closure annotations properly <https://developers.google.com/closure/compiler/docs/api-tutorial3>`_.
 - `Floh's blogpost on this topic <http://floooh.github.io/2016/08/27/asmjs-diet.html>`_ is very helpful.
 - Make sure to use gzip compression on your webserver, which all browsers now support.
-- You can move some of your code into the `Emterpreter <https://github.com/emscripten-core/emscripten/wiki/Emterpreter>`_, which will then run much slower (as it is interpreted), but it will transfer all that code into a smaller amount of data.
 
 The following compiler settings can help (see ``src/settings.js`` for more details):
 
@@ -98,7 +97,7 @@ fastcomp the :ref:`main relevant flag <emcc-llvm-lto>` is ``--llvm-lto 1`` at
 link time.
 
 With the LLVM wasm backend, LTO triggered by compiling objects files with
-``-flto``.  The effect of this flag is to emit LTO object files (techinically
+``-flto``.  The effect of this flag is to emit LTO object files (technically
 this means emitting bitcode).  The linker can handle a mix wasm object files
 and LTO object files.  Passing ``-flto`` at link time will also trigger LTO
 system libraries to be used.

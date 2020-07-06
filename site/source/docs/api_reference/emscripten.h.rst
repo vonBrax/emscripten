@@ -161,7 +161,7 @@ Defines
     }, arr);
 
   .. note::
-    - As of Emscripten ``1.30.4``, the contents of ``EM_ASM`` code blocks appear inside the normal JS file, and as result, Closure compiler and other JavaScript minifiers will be able to operate on them. You may need to use safety quotes in some places (``a['b']`` instead of ``a.b``) to avoid minification fro occurring.
+    - As of Emscripten ``1.30.4``, the contents of ``EM_ASM`` code blocks appear inside the normal JS file, and as result, Closure compiler and other JavaScript minifiers will be able to operate on them. You may need to use safety quotes in some places (``a['b']`` instead of ``a.b``) to avoid minification from occurring.
     - The C preprocessor does not have an understanding of JavaScript tokens, and as a result, if the ``code`` block contains a comma character ``,``, it may be necessary to wrap the code block inside parentheses. For example, code ``EM_ASM(return [1,2,3].length);`` will not compile, but ``EM_ASM((return [1,2,3].length));`` does.
 
 .. c:macro:: EM_ASM_INT(code, ...)
@@ -454,7 +454,6 @@ Functions
   For example, a game might have to run 10 blockers before starting a new level. The operation would first set this value as '10' and then push the 10 blockers. When the 3\ :sup:`rd` blocker (say) completes, progress is displayed as 3/10.
 
   :param int num: The number of blockers that are about to be pushed.
-
 
 .. c:function:: void emscripten_async_call(em_arg_callback_func func, void *arg, int millis)
 
@@ -1040,7 +1039,7 @@ Functions
   Returns whether pseudo-synchronous functions can be used.
 
   :rtype: int
-  :returns: 1 if program was compiled with ASYNCIFY=1 or EMTERPRETER_ASYNC=1, 0 otherwise.
+  :returns: 1 if program was compiled with ASYNCIFY=1, 0 otherwise.
 
 
 .. c:function:: void emscripten_debugger()
@@ -1253,7 +1252,7 @@ Typedefs
 Pseudo-synchronous functions
 ============================
 
-These functions require Asyncify (``-s ASYNCIFY=1``) with the wasm backend, or Emterpreter-async with fastcomp (``-s EMTERPRETIFY=1 -s EMTERPRETIFY_ASYNC=1``). These functions are asynchronous but appear synchronous in C. See `Asyncify <https://emscripten.org/docs/porting/asyncify.html>`_ and `Emterpreter <https://emscripten.org/docs/porting/emterpreter.html>`_ for more details.
+These functions require Asyncify (``-s ASYNCIFY=1``). These functions are asynchronous but appear synchronous in C. See `Asyncify <https://emscripten.org/docs/porting/asyncify.html>`_ for more details.
 
 Sleeping
 --------
@@ -1398,6 +1397,12 @@ Functions
     that means data stored in locals, including locals in functions higher up
     the stack - the wasm VM has spilled them, but none of that is observable to
     user code).
+
+    Note that this function scans wasm locals. Depending on the LLVM
+    optimization level, this may not scan the original locals in your source
+    code. For example in ``-O0`` locals may be stored on the stack. To make
+    sure you scan everything necessary, you can also do
+    ``emscripten_scan_stack``.
 
     This function requires Asyncify - it relies on that option to spill the
     local state all the way up the stack. As a result, it will add overhead

@@ -79,6 +79,7 @@ var LibraryPThreadStub = {
   pthread_setcancelstate: function() { return 0; },
   pthread_setcanceltype: function() { return 0; },
 
+  pthread_cleanup_push__sig: 'vii',
   pthread_cleanup_push: function(routine, arg) {
     __ATEXIT__.push(function() { {{{ makeDynCall('vi') }}}(routine, arg) })
     _pthread_cleanup_push.level = __ATEXIT__.length;
@@ -161,17 +162,17 @@ var LibraryPThreadStub = {
     }
   },
 
-  nanosleep__deps: ['usleep', '__setErrNo'],
+  nanosleep__deps: ['usleep', '$setErrNo'],
   nanosleep: function(rqtp, rmtp) {
     // int nanosleep(const struct timespec  *rqtp, struct timespec *rmtp);
     if (rqtp === 0) {
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return -1;
     }
     var seconds = {{{ makeGetValue('rqtp', C_STRUCTS.timespec.tv_sec, 'i32') }}};
     var nanoseconds = {{{ makeGetValue('rqtp', C_STRUCTS.timespec.tv_nsec, 'i32') }}};
     if (nanoseconds < 0 || nanoseconds > 999999999 || seconds < 0) {
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return -1;
     }
     if (rmtp !== 0) {

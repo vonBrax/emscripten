@@ -1,6 +1,5 @@
 ___gxx_personality_v0
 ___map_file
-___setErrNo
 ___sys_munmap
 ___syscall91
 ___wasi_fd_close
@@ -23,6 +22,7 @@ _fd_write
 _getenv
 _llvm_stackrestore
 _llvm_stacksave
+_llvm_trap
 _strftime
 _strftime_l
 abort

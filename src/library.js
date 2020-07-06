@@ -57,7 +57,7 @@ LibraryManager.library = {
   // utime.h
   // ==========================================================================
 
-  utime__deps: ['$FS', '__setErrNo'],
+  utime__deps: ['$FS', '$setErrNo'],
   utime__proxy: 'sync',
   utime__sig: 'iii',
   utime: function(path, times) {
@@ -82,7 +82,7 @@ LibraryManager.library = {
     }
   },
 
-  utimes__deps: ['$FS', '__setErrNo'],
+  utimes__deps: ['$FS', '$setErrNo'],
   utimes__proxy: 'sync',
   utimes__sig: 'iii',
   utimes: function(path, times) {
@@ -115,17 +115,17 @@ LibraryManager.library = {
     return 0;
   },
 
-  chroot__deps: ['__setErrNo'],
+  chroot__deps: ['$setErrNo'],
   chroot__proxy: 'sync',
   chroot__sig: 'ii',
   chroot: function(path) {
     // int chroot(const char *path);
     // http://pubs.opengroup.org/onlinepubs/7908799/xsh/chroot.html
-    ___setErrNo({{{ cDefine('EACCES') }}});
+    setErrNo({{{ cDefine('EACCES') }}});
     return -1;
   },
 
-  fpathconf__deps: ['__setErrNo'],
+  fpathconf__deps: ['$setErrNo'],
   fpathconf__proxy: 'sync',
   fpathconf__sig: 'iii',
   fpathconf: function(fildes, name) {
@@ -163,12 +163,12 @@ LibraryManager.library = {
       case {{{ cDefine('_PC_FILESIZEBITS') }}}:
         return 64;
     }
-    ___setErrNo({{{ cDefine('EINVAL') }}});
+    setErrNo({{{ cDefine('EINVAL') }}});
     return -1;
   },
   pathconf: 'fpathconf',
 
-  confstr__deps: ['__setErrNo', '$ENV'],
+  confstr__deps: ['$setErrNo', '$ENV'],
   confstr__proxy: 'sync',
   confstr__sig: 'iiii',
   confstr: function(name, buf, len) {
@@ -210,7 +210,7 @@ LibraryManager.library = {
         value = '-m32 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64';
         break;
       default:
-        ___setErrNo({{{ cDefine('EINVAL') }}});
+        setErrNo({{{ cDefine('EINVAL') }}});
         return 0;
     }
     if (len == 0 || buf == 0) {
@@ -225,13 +225,13 @@ LibraryManager.library = {
     }
   },
 
-  execl__deps: ['__setErrNo'],
+  execl__deps: ['$setErrNo'],
   execl__sig: 'iiii',
   execl: function(path, arg0, varArgs) {
     // int execl(const char *path, const char *arg0, ... /*, (char *)0 */);
     // http://pubs.opengroup.org/onlinepubs/009695399/functions/exec.html
     // We don't support executing external code.
-    ___setErrNo({{{ cDefine('ENOEXEC') }}});
+    setErrNo({{{ cDefine('ENOEXEC') }}});
     return -1;
   },
   execle: 'execl',
@@ -265,34 +265,40 @@ LibraryManager.library = {
   },
 #endif
 
-  fork__deps: ['__setErrNo'],
+  // fork, spawn, etc. all return an error as we don't support multiple
+  // processes.
+  fork__deps: ['$setErrNo'],
   fork__sig: 'i',
   fork: function() {
     // pid_t fork(void);
     // http://pubs.opengroup.org/onlinepubs/000095399/functions/fork.html
     // We don't support multiple processes.
-    ___setErrNo({{{ cDefine('EAGAIN') }}});
+    setErrNo({{{ cDefine('EAGAIN') }}});
     return -1;
   },
   vfork: 'fork',
   posix_spawn: 'fork',
   posix_spawnp: 'fork',
+  posix_spawn_file_actions_adddup2: 'fork',
+  posix_spawn_file_actions_addopen: 'fork',
+  posix_spawn_file_actions_destroy: 'fork',
+  posix_spawn_file_actions_init: 'fork',
 
-  setgroups__deps: ['__setErrNo', 'sysconf'],
+  setgroups__deps: ['$setErrNo', 'sysconf'],
   setgroups: function(ngroups, gidset) {
     // int setgroups(int ngroups, const gid_t *gidset);
     // https://developer.apple.com/library/mac/#documentation/Darwin/Reference/ManPages/man2/setgroups.2.html
     if (ngroups < 1 || ngroups > _sysconf({{{ cDefine('_SC_NGROUPS_MAX') }}})) {
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return -1;
     } else {
       // We have just one process/user/group, so it makes no sense to set groups.
-      ___setErrNo({{{ cDefine('EPERM') }}});
+      setErrNo({{{ cDefine('EPERM') }}});
       return -1;
     }
   },
 
-  sysconf__deps: ['__setErrNo'],
+  sysconf__deps: ['$setErrNo'],
   sysconf__proxy: 'sync',
   sysconf__sig: 'ii',
   sysconf: function(name) {
@@ -445,7 +451,7 @@ LibraryManager.library = {
         return 1;
       }
     }
-    ___setErrNo({{{ cDefine('EINVAL') }}});
+    setErrNo({{{ cDefine('EINVAL') }}});
     return -1;
   },
 
@@ -459,19 +465,19 @@ LibraryManager.library = {
     return {{{ DYNAMICTOP_PTR }}};
   },
 
-#if ABORTING_MALLOC && !ALLOW_MEMORY_GROWTH
+#if ABORTING_MALLOC
   $abortOnCannotGrowMemory: function(requestedSize) {
 #if ASSERTIONS
-#if WASM
+#if ALLOW_MEMORY_GROWTH
+    abort('Cannot enlarge memory arrays to size ' + requestedSize + ' bytes (OOM). If you want malloc to return NULL (0) instead of this abort, do not link with -s ABORTING_MALLOC=1 (that is, the default when growth is enabled is to not abort, but you have overridden that)');
+#else // ALLOW_MEMORY_GROWTH
     abort('Cannot enlarge memory arrays to size ' + requestedSize + ' bytes (OOM). Either (1) compile with  -s INITIAL_MEMORY=X  with X higher than the current value ' + HEAP8.length + ', (2) compile with  -s ALLOW_MEMORY_GROWTH=1  which allows increasing the size at runtime, or (3) if you want malloc to return NULL (0) instead of this abort, compile with  -s ABORTING_MALLOC=0 ');
-#else
-    abort('Cannot enlarge memory arrays to size ' + requestedSize + ' bytes (OOM). Either (1) compile with  -s INITIAL_MEMORY=X  with X higher than the current value ' + HEAP8.length + ', (2) compile with  -s ALLOW_MEMORY_GROWTH=1  which allows increasing the size at runtime but prevents some optimizations, (3) set Module.INITIAL_MEMORY to a higher value before the program runs, or (4) if you want malloc to return NULL (0) instead of this abort, compile with  -s ABORTING_MALLOC=0 ');
-#endif
-#else
+#endif // ALLOW_MEMORY_GROWTH
+#else // ASSERTIONS
     abort('OOM');
-#endif
+#endif // ASSERTIONS
   },
-#endif
+#endif // ABORTING_MALLOC
 
 #if TEST_MEMORY_GROWTH_FAILS
   $emscripten_realloc_buffer: function(size) {
@@ -515,7 +521,7 @@ LibraryManager.library = {
 #if ASSERTIONS == 2
   , 'emscripten_get_now'
 #endif
-#if ABORTING_MALLOC && !ALLOW_MEMORY_GROWTH
+#if ABORTING_MALLOC
   , '$abortOnCannotGrowMemory'
 #endif
 #if ALLOW_MEMORY_GROWTH
@@ -523,9 +529,7 @@ LibraryManager.library = {
 #endif
   ],
   emscripten_resize_heap: function(requestedSize) {
-#if CAN_ADDRESS_2GB
     requestedSize = requestedSize >>> 0;
-#endif
 #if ALLOW_MEMORY_GROWTH == 0
 #if ABORTING_MALLOC
     abortOnCannotGrowMemory(requestedSize);
@@ -573,7 +577,11 @@ LibraryManager.library = {
 #if ASSERTIONS
       err('Cannot enlarge memory, asked to go up to ' + requestedSize + ' bytes, but the limit is ' + maxHeapSize + ' bytes!');
 #endif
+#if ABORTING_MALLOC
+      abortOnCannotGrowMemory(requestedSize);
+#else
       return false;
+#endif
     }
 #if USE_ASAN
     // One byte of ASan's shadow memory shadows 8 bytes of real memory. Shadow memory area has a fixed size,
@@ -583,7 +591,11 @@ LibraryManager.library = {
 #if ASSERTIONS
       err('Failed to grow the heap from ' + oldSize + ', as we reached the limit of our shadow memory. Increase ASAN_SHADOW_SIZE.');
 #endif
+#if ABORTING_MALLOC
+      abortOnCannotGrowMemory(requestedSize);
+#else
       return false;
+#endif
     }
 #endif
 
@@ -629,7 +641,11 @@ LibraryManager.library = {
 #if ASSERTIONS
     err('Failed to grow the heap from ' + oldSize + ' bytes to ' + newSize + ' bytes, not enough memory!');
 #endif
+#if ABORTING_MALLOC
+    abortOnCannotGrowMemory(requestedSize);
+#else
     return false;
+#endif
 #endif // ALLOW_MEMORY_GROWTH
   },
 
@@ -644,7 +660,7 @@ LibraryManager.library = {
     updateGlobalBufferAndViews(wasmMemory.buffer);
   },
 
-  system__deps: ['__setErrNo'],
+  system__deps: ['$setErrNo'],
   system: function(command) {
 #if ENVIRONMENT_MAY_BE_NODE
     if (ENVIRONMENT_IS_NODE) {
@@ -686,7 +702,7 @@ LibraryManager.library = {
     // http://pubs.opengroup.org/onlinepubs/000095399/functions/system.html
     // Can't call external programs.
     if (!command) return 0; // no shell available
-    ___setErrNo({{{ cDefine('EAGAIN') }}});
+    setErrNo({{{ cDefine('EAGAIN') }}});
     return -1;
   },
 
@@ -703,10 +719,9 @@ LibraryManager.library = {
   },
 
 #if MINIMAL_RUNTIME && !EXIT_RUNTIME
+  atexit__sig: 'v', // atexit unsupported in MINIMAL_RUNTIME
   atexit: function(){},
   __cxa_atexit: function(){},
-  __cxa_thread_atexit: function(){},
-  __cxa_thread_atexit_impl: function(){},
 #else
   atexit__proxy: 'sync',
   atexit__sig: 'iii',
@@ -716,11 +731,20 @@ LibraryManager.library = {
     warnOnce('atexit() called, but EXIT_RUNTIME is not set, so atexits() will not be called. set EXIT_RUNTIME to 1 (see the FAQ)');
 #endif
 #endif
+
+#if EXIT_RUNTIME
     __ATEXIT__.unshift({ func: func, arg: arg });
+#endif
   },
   __cxa_atexit: 'atexit',
 
+#endif
+
   // used in rust, clang when doing thread_local statics
+#if USE_PTHREADS
+  __cxa_thread_atexit: 'pthread_cleanup_push',
+  __cxa_thread_atexit_impl: 'pthread_cleanup_push',
+#else
   __cxa_thread_atexit: 'atexit',
   __cxa_thread_atexit_impl: 'atexit',
 #endif
@@ -746,7 +770,11 @@ LibraryManager.library = {
   // to limitations in the system libraries (we can't easily add a global
   // ctor to create the environment without it always being linked in with
   // libc).
-  __buildEnvironment__deps: ['$ENV', '_getExecutableName'],
+  __buildEnvironment__deps: ['$ENV', '_getExecutableName'
+#if MINIMAL_RUNTIME
+    , '$writeAsciiToMemory'
+#endif
+  ],
   __buildEnvironment: function(environ) {
     // WARNING: Arbitrary limit!
     var MAX_ENV_VALUES = 64;
@@ -830,20 +858,20 @@ LibraryManager.library = {
     ___buildEnvironment(__get_environ());
     return 0;
   },
-  setenv__deps: ['$ENV', '__buildEnvironment', '__setErrNo'],
+  setenv__deps: ['$ENV', '__buildEnvironment', '$setErrNo'],
   setenv__proxy: 'sync',
   setenv__sig: 'iiii',
   setenv: function(envname, envval, overwrite) {
     // int setenv(const char *envname, const char *envval, int overwrite);
     // http://pubs.opengroup.org/onlinepubs/009695399/functions/setenv.html
     if (envname === 0) {
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return -1;
     }
     var name = UTF8ToString(envname);
     var val = UTF8ToString(envval);
     if (name === '' || name.indexOf('=') !== -1) {
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return -1;
     }
     if (ENV.hasOwnProperty(name) && !overwrite) return 0;
@@ -851,19 +879,19 @@ LibraryManager.library = {
     ___buildEnvironment(__get_environ());
     return 0;
   },
-  unsetenv__deps: ['$ENV', '__buildEnvironment', '__setErrNo'],
+  unsetenv__deps: ['$ENV', '__buildEnvironment', '$setErrNo'],
   unsetenv__proxy: 'sync',
   unsetenv__sig: 'ii',
   unsetenv: function(name) {
     // int unsetenv(const char *name);
     // http://pubs.opengroup.org/onlinepubs/009695399/functions/unsetenv.html
     if (name === 0) {
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return -1;
     }
     name = UTF8ToString(name);
     if (name === '' || name.indexOf('=') !== -1) {
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return -1;
     }
     if (ENV.hasOwnProperty(name)) {
@@ -872,7 +900,7 @@ LibraryManager.library = {
     }
     return 0;
   },
-  putenv__deps: ['$ENV', '__buildEnvironment', '__setErrNo'],
+  putenv__deps: ['$ENV', '__buildEnvironment', '$setErrNo'],
   putenv__proxy: 'sync',
   putenv__sig: 'ii',
   putenv: function(string) {
@@ -882,13 +910,13 @@ LibraryManager.library = {
     //          string is taken by reference so future changes are reflected.
     //          We copy it instead, possibly breaking some uses.
     if (string === 0) {
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return -1;
     }
     string = UTF8ToString(string);
     var splitPoint = string.indexOf('=')
     if (string === '' || string.indexOf('=') === -1) {
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return -1;
     }
     var name = string.slice(0, splitPoint);
@@ -1332,46 +1360,6 @@ LibraryManager.library = {
     stackRestore(ret);
   },
 
-#if MINIMAL_RUNTIME
-#if WASM_BACKEND == 0
-  $abortStackOverflow__deps: ['$stackSave'],
-#endif
-  $abortStackOverflow__import: true,
-  $abortStackOverflow: function(allocSize) {
-    abort('Stack overflow! Attempted to allocate ' + allocSize + ' bytes on the stack, but stack has only ' + (STACK_MAX - stackSave() + allocSize) + ' bytes available!');
-  },
-
-#if WASM_BACKEND == 0
-  $stackAlloc__asm: true,
-  $stackAlloc__sig: 'ii',
-  $stackAlloc__deps: ['$abortStackOverflow'],
-  $stackAlloc: function(size) {
-    size = size|0;
-    var ret = 0;
-    ret = STACKTOP;
-    STACKTOP = (STACKTOP + size)|0;
-    STACKTOP = (STACKTOP + 15)&-16;
-#if ASSERTIONS || STACK_OVERFLOW_CHECK >= 2
-    if ((STACKTOP|0) >= (STACK_MAX|0)) abortStackOverflow(size|0);
-#endif
-    return ret|0;
-  },
-
-  $stackSave__asm: true,
-  $stackSave__sig: 'i',
-  $stackSave: function() {
-    return STACKTOP|0;
-  },
-
-  $stackRestore__asm: true,
-  $stackRestore__sig: 'vi',
-  $stackRestore: function(top) {
-    top = top|0;
-    STACKTOP = top;
-  },
-#endif
-#endif
-
   llvm_flt_rounds: function() {
     return -1; // 'indeterminable' for FLT_ROUNDS
   },
@@ -1646,10 +1634,6 @@ LibraryManager.library = {
     if (x != x) return +y;
     if (y != y) return +x;
     return +Math_max(+x, +y);
-  },
-
-  _reallyNegative: function(x) {
-    return x < 0 || (x === 0 && (1/x) === -Infinity);
   },
 
   // ==========================================================================
@@ -2073,7 +2057,7 @@ LibraryManager.library = {
   },
 
   ctime_r__deps: ['localtime_r', 'asctime_r'
-#if MINIMAL_RUNTIME && !WASM_BACKEND
+#if !WASM_BACKEND
     , '$stackSave', '$stackAlloc', '$stackRestore'
 #endif
   ],
@@ -2131,15 +2115,15 @@ LibraryManager.library = {
     }
   },
 
-  stime__deps: ['__setErrNo'],
+  stime__deps: ['$setErrNo'],
   stime: function(when) {
-    ___setErrNo({{{ cDefine('EPERM') }}});
+    setErrNo({{{ cDefine('EPERM') }}});
     return -1;
   },
 
-  __map_file__deps: ['__setErrNo'],
+  __map_file__deps: ['$setErrNo'],
   __map_file: function(pathname, size) {
-    ___setErrNo({{{ cDefine('EPERM') }}});
+    setErrNo({{{ cDefine('EPERM') }}});
     return -1;
   },
 
@@ -2772,12 +2756,12 @@ LibraryManager.library = {
     return 0;
   },
 
-  timespec_get__deps: ['clock_gettime', '__setErrNo'],
+  timespec_get__deps: ['clock_gettime', '$setErrNo'],
   timespec_get: function(ts, base) {
     //int timespec_get(struct timespec *ts, int base);
     if (base !== {{{ cDefine('TIME_UTC') }}}) {
       // There is no other implemented value than TIME_UTC; all other values are considered erroneous.
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return 0;
     }
     var ret = _clock_gettime({{{ cDefine('CLOCK_REALTIME') }}}, ts);
@@ -2788,7 +2772,7 @@ LibraryManager.library = {
   // sys/time.h
   // ==========================================================================
 
-  clock_gettime__deps: ['emscripten_get_now', 'emscripten_get_now_is_monotonic', '__setErrNo'],
+  clock_gettime__deps: ['emscripten_get_now', 'emscripten_get_now_is_monotonic', '$setErrNo'],
   clock_gettime: function(clk_id, tp) {
     // int clock_gettime(clockid_t clk_id, struct timespec *tp);
     var now;
@@ -2797,7 +2781,7 @@ LibraryManager.library = {
     } else if ((clk_id === {{{ cDefine('CLOCK_MONOTONIC') }}} || clk_id === {{{ cDefine('CLOCK_MONOTONIC_RAW') }}}) && _emscripten_get_now_is_monotonic) {
       now = _emscripten_get_now();
     } else {
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return -1;
     }
     {{{ makeSetValue('tp', C_STRUCTS.timespec.tv_sec, '(now/1000)|0', 'i32') }}}; // seconds
@@ -2806,7 +2790,7 @@ LibraryManager.library = {
   },
   __clock_gettime__sig: 'iii',
   __clock_gettime: 'clock_gettime', // musl internal alias
-  clock_getres__deps: ['emscripten_get_now_res', 'emscripten_get_now_is_monotonic', '__setErrNo'],
+  clock_getres__deps: ['emscripten_get_now_res', 'emscripten_get_now_is_monotonic', '$setErrNo'],
   clock_getres: function(clk_id, res) {
     // int clock_getres(clockid_t clk_id, struct timespec *res);
     var nsec;
@@ -2815,7 +2799,7 @@ LibraryManager.library = {
     } else if (clk_id === {{{ cDefine('CLOCK_MONOTONIC') }}} && _emscripten_get_now_is_monotonic) {
       nsec = _emscripten_get_now_res();
     } else {
-      ___setErrNo({{{ cDefine('EINVAL') }}});
+      setErrNo({{{ cDefine('EINVAL') }}});
       return -1;
     }
     {{{ makeSetValue('res', C_STRUCTS.timespec.tv_sec, '(nsec/1000000000)|0', 'i32') }}};
@@ -2891,78 +2875,11 @@ LibraryManager.library = {
   // ==========================================================================
 
 #if SUPPORT_LONGJMP
-  // asm.js-style setjmp/longjmp support for wasm binaryen backend.
-  // In asm.js compilation, various variables including setjmpId will be
-  // generated within 'var asm' in emscripten.py, while in wasm compilation,
-  // wasm side is considered as 'asm' so they are not generated. But
-  // saveSetjmp() needs setjmpId and no other functions in wasm side needs it.
-  // So we declare it here if WASM_BACKEND=1.
-#if WASM_BACKEND == 1
-  $setjmpId: 0,
+  longjmp__deps: [
+#if WASM_BACKEND == 0
+  , 'setThrew'
 #endif
-
-  saveSetjmp__asm: true,
-  saveSetjmp__sig: 'iii',
-#if WASM_BACKEND == 1
-  saveSetjmp__deps: ['realloc', '$setjmpId'],
-#else
-  saveSetjmp__deps: ['realloc'],
-#endif
-  saveSetjmp: function(env, label, table, size) {
-    // Not particularly fast: slow table lookup of setjmpId to label. But setjmp
-    // prevents relooping anyhow, so slowness is to be expected. And typical case
-    // is 1 setjmp per invocation, or less.
-    env = env|0;
-    label = label|0;
-    table = table|0;
-    size = size|0;
-    var i = 0;
-    setjmpId = (setjmpId+1)|0;
-    {{{ makeSetValueAsm('env', '0', 'setjmpId', 'i32') }}};
-    while ((i|0) < (size|0)) {
-      if ({{{ makeGetValueAsm('table', '(i<<3)', 'i32') }}} == 0) {
-        {{{ makeSetValueAsm('table', '(i<<3)', 'setjmpId', 'i32') }}};
-        {{{ makeSetValueAsm('table', '(i<<3)+4', 'label', 'i32') }}};
-        // prepare next slot
-        {{{ makeSetValueAsm('table', '(i<<3)+8', '0', 'i32') }}};
-        {{{ makeSetTempRet0('size') }}};
-        return table | 0;
-      }
-      i = i+1|0;
-    }
-    // grow the table
-    size = (size*2)|0;
-    table = _realloc(table|0, 8*(size+1|0)|0) | 0;
-    table = _saveSetjmp(env|0, label|0, table|0, size|0) | 0;
-    {{{ makeSetTempRet0('size') }}};
-    return table | 0;
-  },
-
-  testSetjmp__asm: true,
-  testSetjmp__sig: 'iii',
-  testSetjmp: function(id, table, size) {
-    id = id|0;
-    table = table|0;
-    size = size|0;
-    var i = 0, curr = 0;
-    while ((i|0) < (size|0)) {
-      curr = {{{ makeGetValueAsm('table', '(i<<3)', 'i32') }}};
-      if ((curr|0) == 0) break;
-      if ((curr|0) == (id|0)) {
-        return {{{ makeGetValueAsm('table', '(i<<3)+4', 'i32') }}};
-      }
-      i = i+1|0;
-    }
-    return 0;
-  },
-
-  setjmp__deps: ['saveSetjmp', 'testSetjmp'],
-  setjmp__inline: function(env) {
-    // Save the label
-    return '_saveSetjmp(' + env + ', label, setjmpTable)|0';
-  },
-
-  longjmp__deps: ['saveSetjmp', 'testSetjmp', 'setThrew'],
+  ],
   longjmp: function(env, value) {
     _setThrew(env, value || 1);
     throw 'longjmp';
@@ -2977,13 +2894,13 @@ LibraryManager.library = {
   // sys/wait.h
   // ==========================================================================
 
-  wait__deps: ['__setErrNo'],
+  wait__deps: ['$setErrNo'],
   wait__sig: 'ii',
   wait: function(stat_loc) {
     // pid_t wait(int *stat_loc);
     // http://pubs.opengroup.org/onlinepubs/009695399/functions/wait.html
     // Makes no sense in a single-process environment.
-    ___setErrNo({{{ cDefine('ECHILD') }}});
+    setErrNo({{{ cDefine('ECHILD') }}});
     return -1;
   },
   // NOTE: These aren't really the same, but we use the same stub for them all.
@@ -3242,17 +3159,20 @@ LibraryManager.library = {
     {{{ cDefine('EOWNERDEAD') }}}: 'Previous owner died',
     {{{ cDefine('ESTRPIPE') }}}: 'Streams pipe error',
   },
-  __setErrNo: function(value) {
 #if SUPPORT_ERRNO
-    if (Module['___errno_location']) {{{ makeSetValue("Module['___errno_location']()", 0, 'value', 'i32') }}};
-#if ASSERTIONS
-    else err('failed to set errno from JS');
-#endif
+  $setErrNo__deps: ['__errno_location'],
+  $setErrNo: function(value) {
+    {{{makeSetValue("___errno_location()", 0, 'value', 'i32') }}};
     return value;
-#else
-    return 0;
-#endif
   },
+#else
+  $setErrNo: function(value) {
+#if ASSERTIONS
+    err('failed to set errno from JS');
+#endif
+    return 0;
+  },
+#endif
 
 #if !WASM_BACKEND
   // ==========================================================================
@@ -3584,7 +3504,7 @@ LibraryManager.library = {
   gethostbyaddr__sig: 'iiii',
   gethostbyaddr: function (addr, addrlen, type) {
     if (type !== {{{ cDefine('AF_INET') }}}) {
-      ___setErrNo({{{ cDefine('EAFNOSUPPORT') }}});
+      setErrNo({{{ cDefine('EAFNOSUPPORT') }}});
       // TODO: set h_errno
       return null;
     }
@@ -3854,7 +3774,11 @@ LibraryManager.library = {
   // are actually negative numbers and you can't have expressions as keys in JavaScript literals.
   $GAI_ERRNO_MESSAGES: {},
 
-  gai_strerror__deps: ['$GAI_ERRNO_MESSAGES'],
+  gai_strerror__deps: ['$GAI_ERRNO_MESSAGES'
+#if MINIMAL_RUNTIME
+    , '$writeAsciiToMemory'
+#endif
+  ],
   gai_strerror: function(val) {
     var buflen = 256;
 
@@ -3896,7 +3820,11 @@ LibraryManager.library = {
     list: [],
     map: {}
   },
-  setprotoent__deps: ['$Protocols'],
+  setprotoent__deps: ['$Protocols'
+#if MINIMAL_RUNTIME
+    , '$writeAsciiToMemory'
+#endif
+  ],
   setprotoent: function(stayopen) {
     // void setprotoent(int stayopen);
 
@@ -3982,11 +3910,11 @@ LibraryManager.library = {
   // nonblocking
   // ==========================================================================
 #if SOCKET_WEBRTC
-  $Sockets__deps: ['__setErrNo',
+  $Sockets__deps: ['$setErrNo',
     function() { return 'var SocketIO = ' + read('socket.io.js') + ';\n' },
     function() { return 'var Peer = ' + read('wrtcp.js') + ';\n' }],
 #else
-  $Sockets__deps: ['__setErrNo'],
+  $Sockets__deps: ['$setErrNo'],
 #endif
   $Sockets: {
     BUFFER_SIZE: 10*1024, // initial size
@@ -4319,10 +4247,10 @@ LibraryManager.library = {
     }
   },
 
-  emscripten_log__deps: ['_formatString', 'emscripten_log_js'],
+  emscripten_log__deps: ['$formatString', 'emscripten_log_js'],
   emscripten_log: function(flags, format, varargs) {
     var str = '';
-    var result = __formatString(format, varargs);
+    var result = formatString(format, varargs);
     for (var i = 0 ; i < result.length; ++i) {
       str += String.fromCharCode(result[i]);
     }
@@ -4344,7 +4272,7 @@ LibraryManager.library = {
   },
 
   emscripten_has_asyncify: function() {
-    return {{{ ASYNCIFY || EMTERPRETIFY_ASYNC }}};
+    return {{{ ASYNCIFY }}};
   },
 
   emscripten_debugger: function() {
@@ -4619,40 +4547,26 @@ LibraryManager.library = {
     });
   },
 
-  emscripten_get_stack_top: function() {
-    return STACKTOP;
-  },
-
-  emscripten_get_stack_base: function() {
-    return STACK_BASE;
-  },
-
+  _readAsmConstArgsArray: '=[]',
+  $readAsmConstArgs__deps: ['_readAsmConstArgsArray'],
   $readAsmConstArgs: function(sigPtr, buf) {
-    if (!readAsmConstArgs.array) {
-      readAsmConstArgs.array = [];
-    }
-    var args = readAsmConstArgs.array;
-    args.length = 0;
+#if ASSERTIONS
+    // Nobody should have mutated _readAsmConstArgsArray underneath us to be something else than an array.
+    assert(Array.isArray( __readAsmConstArgsArray));
+    // Input buffer must be a pre-existing varargs buffer, so already aligned to 4 bytes.
+    assert(buf % 4 == 0);
+#endif
+    __readAsmConstArgsArray.length = 0;
     var ch;
+    buf >>= 2; // Align buf up front to index Int32Array (HEAP32)
     while (ch = HEAPU8[sigPtr++]) {
-      if (ch === 100/*'d'*/ || ch === 102/*'f'*/) {
-        buf = (buf + 7) & ~7;
-        args.push(HEAPF64[(buf >> 3)]);
-        buf += 8;
-      } else
 #if ASSERTIONS
-      if (ch === 105 /*'i'*/)
+      assert(ch === 100/*'d'*/ || ch === 102/*'f'*/ || ch === 105 /*'i'*/);
 #endif
-      {
-        buf = (buf + 3) & ~3;
-        args.push(HEAP32[(buf >> 2)]);
-        buf += 4;
-      }
-#if ASSERTIONS
-      else abort("unexpected char in asm const signature " + ch);
-#endif
+      __readAsmConstArgsArray.push(ch < 105 ? HEAPF64[++buf >> 1] : HEAP32[buf]);
+      ++buf;
     }
-    return args;
+    return __readAsmConstArgsArray;
   },
 
 #if !DECLARE_ASM_MODULE_EXPORTS
@@ -5213,6 +5127,39 @@ LibraryManager.library = {
 #else
     return thisProgram || './this.program';
 #endif
+  },
+
+  $listenOnce: function(object, event, func) {
+#if MIN_CHROME_VERSION < 55 || MIN_EDGE_VERSION < 18 || MIN_FIREFOX_VERSION < 50 || MIN_IE_VERSION != TARGET_NOT_SUPPORTED // https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener
+    object.addEventListener(event, function handler() {
+      func();
+      object.removeEventListener(event, handler);
+    });
+#else
+    object.addEventListener(event, func, { 'once': true });
+#endif
+  },
+
+  // Receives a Web Audio context plus a set of elements to listen for user
+  // input events on, and registers a context resume() for them. This lets
+  // audio work properly in an automatic way, as browsers won't let audio run
+  // without user interaction.
+  // If @elements is not provided, we default to the document and canvas
+  // elements, which handle common use cases.
+  $autoResumeAudioContext__deps: ['$listenOnce'],
+  $autoResumeAudioContext: function(ctx, elements) {
+    if (!elements) {
+      elements = [document, document.getElementById('canvas')];
+    }
+    ['keydown', 'mousedown', 'touchstart'].forEach(function(event) {
+      elements.forEach(function(element) {
+        if (element) {
+          listenOnce(element, event, function() {
+            if (ctx.state === 'suspended') ctx.resume();
+          });
+        }
+      });
+    });
   },
 };
 

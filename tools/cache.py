@@ -25,21 +25,12 @@ class Cache(object):
   # acquired.
   EM_EXCLUSIVE_CACHE_ACCESS = int(os.environ.get('EM_EXCLUSIVE_CACHE_ACCESS', '0'))
 
-  def __init__(self, use_subdir=True):
+  def __init__(self, dirname, use_subdir=True):
     # figure out the root directory for all caching
-    dirname = os.environ.get('EM_CACHE')
-    if dirname:
-      dirname = os.path.normpath(dirname)
-    if not dirname:
-      dirname = os.path.expanduser(os.path.join('~', '.emscripten_cache'))
+    dirname = os.path.normpath(dirname)
     self.root_dirname = dirname
 
-    def try_remove_ending(thestring, ending):
-      if thestring.endswith(ending):
-        return thestring[:-len(ending)]
-      return thestring
-
-    self.filelock_name = try_remove_ending(try_remove_ending(dirname, '/'), '\\') + '.lock'
+    self.filelock_name = dirname.rstrip('/\\') + '.lock'
     self.filelock = filelock.FileLock(self.filelock_name)
 
     # if relevant, use a subdir of the cache
@@ -92,10 +83,13 @@ class Cache(object):
       self.release_cache_lock()
 
   def erase(self):
-    tempfiles.try_delete(self.root_dirname)
-    self.filelock = None
-    tempfiles.try_delete(self.filelock_name)
-    self.filelock = filelock.FileLock(self.filelock_name)
+    self.acquire_cache_lock()
+    try:
+      if os.path.exists(self.root_dirname):
+        for f in os.listdir(self.root_dirname):
+          tempfiles.try_delete(os.path.join(self.root_dirname, f))
+    finally:
+      self.release_cache_lock()
 
   def get_path(self, shortname):
     return os.path.join(self.dirname, shortname)

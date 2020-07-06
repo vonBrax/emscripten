@@ -84,10 +84,16 @@ Make sure that you are running an :ref:`optimized build <Optimizing-Code>` (smal
 Network latency is also a possible factor in startup time. Consider putting the file loading code in a separate script element from the generated code so that the browser can start the network download in parallel to starting up the codebase (run the :ref:`file packager <packaging-files>` and put file loading code in one script element, and the generated codebase in a later script element).
 
 
-Why does my program stall in "Downloading..." or "Preparing..."?
-================================================================
+.. _faq-local-webserver:
 
-This can happen when loading the page using a ``file://`` URL. That works in some browsers (like Firefox) but not in others (like Chrome). Instead, it's best to use a webserver (like Python's dev server, ``python -m SimpleHTTPServer``).
+How do I run a local webserver for testing / why does my program stall in "Downloading..." or "Preparing..."?
+=============================================================================================================
+
+That error can happen when loading the page using a ``file://`` URL, which works
+in some browsers but not in others. Instead, it's best
+to use a local webserver. For example, Python has one built in,
+``python -m http.server`` in Python 3 or ``python -m SimpleHTTPServer``
+in Python 2. After doing that, you can visit ``http://localhost:8000/``.
 
 Otherwise, to debug this, look for an error reported on the page itself, or in the browser devtools (web console and network tab), or in your webserver's logging.
 
@@ -97,11 +103,6 @@ What is "No WebAssembly support found. Build with -s WASM=0 to target JavaScript
 
 Those errors indicate that WebAssembly support is not present in the VM you are trying to run the code in. Compile with ``-s WASM=0`` to disable WebAssembly (and emit asm.js instead) if you want your code to run in such environments (all modern browsers support WebAssembly, but in some cases you may want to reach 100% of browsers, including legacy ones).
 
-
-Why do I get ``error while loading shared libraries: libtinfo.so.5``?
-=====================================================================
-
-LLVM and clang link libtinfo dynamically. On some recent Linuxes you may have only ``libtinfo.so.6`` (while our builders target the last Ubuntu LTS). To fix this, you can do something like ``apt-get install libtinfo5`` on Debian or Ubuntu, or on Fedora something like ``dnf install ncurses-compat-libs``.
 
 Why do I get ``machine type must be wasm32`` or ``is not a valid input file`` during linking?
 =============================================================================================
@@ -215,7 +216,7 @@ It is possible to allow access to local file system for code running in *node.js
 How can I tell when the page is fully loaded and it is safe to call compiled functions?
 =======================================================================================
 
-(You may need this answer if you see an error saying something like ``you need to wait for the runtime to be ready (e.g. wait for main() to be called)``, which is a check enabled in ``ASSERTIONS`` builds.)
+(You may need this answer if you see an error saying something like ``native function `x` called before runtime initialization``, which is a check enabled in ``ASSERTIONS`` builds.)
 
 Calling a compiled function before a page has fully loaded can result in an error, if the function relies on files that may not be present (for example the :ref:`.mem <emcc-memory-init-file>` file and :ref:`preloaded <emcc-preload-file>` files are loaded asynchronously, and therefore if you just place some JS that calls compiled code in a ``--post-js``, that code will be called synchronously at the end of the combined JS file, potentially before the asynchronous event happens, which is bad).
 
@@ -256,12 +257,12 @@ Here is an example of how to use it:
 
 The crucial thing is that ``Module`` exists, and has the property ``onRuntimeInitialized``, before the script containing emscripten output (``my_project.js`` in this example) is loaded.
 
-Another option is to use the ``MODULARIZE`` option, using ``-s MODULARIZE=1``. That will put all of the generated JavaScript in a function, which you can call to create an instance. The instance has a promise-like `.then()` method, so if you build with say ``-s MODULARIZE=1 -s 'EXPORT_NAME="MyCode"'`` (see details in settings.js), then you can do something like this:
+Another option is to use the ``MODULARIZE`` option, using ``-s MODULARIZE=1``. That puts all of the generated JavaScript into a factory function, which you can call to create an instance of your module. The factory function returns a Promise that resolves with the module instance. The promise is resolved once it's safe to call the compiled code, i.e. after the compiled code has been downloaded and instantiated. For example, if you build with ``-s MODULARIZE=1 -s 'EXPORT_NAME="createMyModule"'`` (see details in settings.js), then you can do this:
 
 ::
 
-    MyCode().then(function(Module) {
-      // this is reached when everything is ready, and you can call methods on Module
+    createMyModule().then((myModule) => {
+      // this is reached when everything is ready, and you can call methods on myModule
     });
 
 .. _faq-NO_EXIT_RUNTIME:
