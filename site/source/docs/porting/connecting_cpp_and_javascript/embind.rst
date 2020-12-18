@@ -96,7 +96,18 @@ object.
    use whatever name you like for the module by assigning it to a new
    variable: ``var MyModuleName = Module;``.
 
+Binding libraries
+=================
 
+Binding code is run as a static constructor and static constructors only get
+run if the object file is included in the link, therefore when generating
+bindings for library files the compiler must be explicitly instructed to include
+the object file.
+
+For example, to generate bindings for a hypothetical **library.a** compiled
+with Emscripten run *emcc* with ``--whole-archive`` compiler flag::
+
+   emcc --bind -o library.js -Wl,--whole-archive library.a -Wl,--no-whole-archive
 
 Classes
 =======
@@ -205,6 +216,11 @@ Consider the example below:
         int age;
     };
 
+	// Array fields are treated as if they were std::array<type,size>
+	struct ArrayInStruct {
+		int field[2];
+	};
+
     PersonRecord findPersonAtLocation(Point2f);
 
     EMSCRIPTEN_BINDINGS(my_value_example) {
@@ -217,6 +233,16 @@ Consider the example below:
             .field("name", &PersonRecord::name)
             .field("age", &PersonRecord::age)
             ;
+
+		value_object<ArrayInStruct>("ArrayInStruct")
+			.field("field", &ArrayInStruct::field) // Need to register the array type
+			;
+
+		// Register std::array<int, 2> because ArrayInStruct::field is interpreted as such
+		value_array<std::array<int, 2>>("array_int_2")
+			.element(index<0>())
+			.element(index<1>())
+			;
 
         function("findPersonAtLocation", &findPersonAtLocation);
     }

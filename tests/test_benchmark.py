@@ -3,7 +3,6 @@
 # University of Illinois/NCSA Open Source License.  Both these licenses can be
 # found in the LICENSE file.
 
-from __future__ import print_function
 import math
 import os
 import re
@@ -19,8 +18,8 @@ if __name__ == '__main__':
 import clang_native
 import jsrun
 import runner
-from tools.shared import run_process, path_from_root, SPIDERMONKEY_ENGINE, LLVM_ROOT, V8_ENGINE, PIPE, try_delete, PYTHON, EMCC
-from tools import shared, building
+from tools.shared import run_process, path_from_root, PIPE, try_delete, EMCC, config
+from tools import building
 
 # standard arguments for timing:
 # 0: no runtime, just startup
@@ -50,7 +49,7 @@ PROFILING = 0
 LLVM_FEATURE_FLAGS = ['-mnontrapping-fptoint']
 
 
-class Benchmarker(object):
+class Benchmarker():
   # called when we init the object, which is during startup, even if we are
   # not running benchmarks
   def __init__(self, name):
@@ -189,7 +188,7 @@ class EmscriptenBenchmarker(Benchmarker):
     self.filename = filename
     self.old_env = os.environ
     os.environ = self.env.copy()
-    llvm_root = self.env.get('LLVM') or LLVM_ROOT
+    llvm_root = self.env.get('LLVM') or config.LLVM_ROOT
     if lib_builder:
       env_init = self.env.copy()
       # Note that we need to pass in all the flags here because some build
@@ -201,7 +200,7 @@ class EmscriptenBenchmarker(Benchmarker):
     final = final.replace('.cpp', '')
     try_delete(final)
     cmd = [
-      PYTHON, EMCC, filename,
+      EMCC, filename,
       OPTIMIZATIONS,
       '-s', 'INITIAL_MEMORY=256MB',
       '-s', 'FILESYSTEM=0',
@@ -221,7 +220,7 @@ class EmscriptenBenchmarker(Benchmarker):
     self.filename = final
 
   def run(self, args):
-    return jsrun.run_js(self.filename, engine=self.engine, args=args, stderr=PIPE, full_output=True)
+    return jsrun.run_js(self.filename, engine=self.engine, args=args, stderr=PIPE)
 
   def get_output_files(self):
     ret = [self.filename]
@@ -341,7 +340,7 @@ class CheerpBenchmarker(Benchmarker):
         try_delete(dir_)
 
   def run(self, args):
-    return jsrun.run_js(self.filename, engine=self.engine, args=args, stderr=PIPE, full_output=True, assert_returncode=None)
+    return jsrun.run_js(self.filename, engine=self.engine, args=args, stderr=PIPE)
 
   def get_output_files(self):
     return [self.filename, self.filename.replace('.js', '.wasm')]
@@ -357,11 +356,11 @@ benchmarkers = [
   # NativeBenchmarker('gcc',   'gcc',    'g++')
 ]
 
-if V8_ENGINE and V8_ENGINE in shared.JS_ENGINES:
+if config.V8_ENGINE and config.V8_ENGINE in config.JS_ENGINES:
   # avoid the baseline compiler running, because it adds a lot of noise
   # (the nondeterministic time it takes to get to the full compiler ends up
   # mattering as much as the actual benchmark)
-  aot_v8 = V8_ENGINE + ['--no-liftoff']
+  aot_v8 = config.V8_ENGINE + ['--no-liftoff']
   default_v8_name = os.environ.get('EMBENCH_NAME') or 'v8'
   benchmarkers += [
     EmscriptenBenchmarker(default_v8_name, aot_v8),
@@ -373,7 +372,7 @@ if V8_ENGINE and V8_ENGINE in shared.JS_ENGINES:
       # CheerpBenchmarker('cheerp-v8-wasm', aot_v8),
     ]
 
-if SPIDERMONKEY_ENGINE and SPIDERMONKEY_ENGINE in shared.JS_ENGINES:
+if config.SPIDERMONKEY_ENGINE and config.SPIDERMONKEY_ENGINE in config.JS_ENGINES:
   # TODO: ensure no baseline compiler is used, see v8
   benchmarkers += [
     # EmscriptenBenchmarker('sm', SPIDERMONKEY_ENGINE),
@@ -383,7 +382,7 @@ if SPIDERMONKEY_ENGINE and SPIDERMONKEY_ENGINE in shared.JS_ENGINES:
       # CheerpBenchmarker('cheerp-sm-wasm', SPIDERMONKEY_ENGINE),
     ]
 
-if shared.NODE_JS and shared.NODE_JS in shared.JS_ENGINES:
+if config.NODE_JS and config.NODE_JS in config.JS_ENGINES:
   benchmarkers += [
     # EmscriptenBenchmarker('Node.js', shared.NODE_JS),
   ]
@@ -409,7 +408,7 @@ class benchmark(runner.RunnerCore):
         fingerprint.append('sm: ' + [line for line in run_process(['hg', 'tip'], stdout=PIPE).stdout.splitlines() if 'changeset' in line][0])
     except Exception:
       pass
-    fingerprint.append('llvm: ' + LLVM_ROOT)
+    fingerprint.append('llvm: ' + config.LLVM_ROOT)
     print('Running Emscripten benchmarks... [ %s ]' % ' | '.join(fingerprint))
 
   # avoid depending on argument reception from the commandline
@@ -829,10 +828,6 @@ class benchmark(runner.RunnerCore):
   def test_fasta_double(self):
     self.fasta('fasta_double', 'double')
 
-  @non_core
-  def test_fasta_double_full(self):
-    self.fasta('fasta_double_full', 'double', emcc_args=['-s', 'DOUBLE_MODE=1'])
-
   def test_skinning(self):
     src = open(path_from_root('tests', 'skinning_test_no_simd.cpp'), 'r').read()
     self.do_benchmark('skinning', src, 'blah=0.000000')
@@ -941,13 +936,6 @@ class benchmark(runner.RunnerCore):
     def output_parser(output):
       return float(re.search(r'Total elapsed: ([\d\.]+)', output).group(1))
     self.do_benchmark('matrix_multiply', open(path_from_root('tests', 'matrix_multiply.cpp')).read(), 'Total elapsed:', output_parser=output_parser, shared_args=['-I' + path_from_root('tests')])
-
-  @non_core
-  def test_zzz_java_nbody(self): # tests xmlvm compiled java, including bitcasts of doubles, i64 math, etc.
-    args = [path_from_root('tests', 'nbody-java', x) for x in os.listdir(path_from_root('tests', 'nbody-java')) if x.endswith('.c')] + \
-           ['-I' + path_from_root('tests', 'nbody-java')]
-    self.do_benchmark('nbody_java', '', '''Time(s)''',
-                      force_c=True, emcc_args=args + ['--llvm-lto', '2'], native_args=args + ['-lgc', '-std=c99', '-target', 'x86_64-pc-linux-gnu', '-lm'])
 
   def lua(self, benchmark, expected, output_parser=None, args_processor=None):
     self.emcc_args.remove('-Werror')

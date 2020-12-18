@@ -480,7 +480,7 @@ The following table highlights the availability and expected performance of diff
    * - _mm_load_pd
      - 🟡 wasm_v128_load. VM must guess type. :raw-html:`<br />` Unaligned load on x86 CPUs.
    * - _mm_load1_pd (_mm_load_pd1)
-     - 🟡 Virtual. v64x2.load_splat, VM must guess type.
+     - 🟡 Virtual. wasm_v64x2_load_splat, VM must guess type.
    * - _mm_load_sd
      - ❌ emulated with wasm_f64x2_make
    * - _mm_load_si128
@@ -536,9 +536,9 @@ The following table highlights the availability and expected performance of diff
    * - _mm_mul_sd
      - ⚠️ emulated with a shuffle
    * - _mm_mulhi_epi16
-     - ❌ scalarized
+     - ⚠️ emulated with a SIMD four widen+two mul+generic shuffle
    * - _mm_mulhi_epu16
-     - ❌ scalarized
+     - ⚠️ emulated with a SIMD four widen+two mul+generic shuffle
    * - _mm_mullo_epi16
      - ✅ wasm_i16x8_mul
    * - _mm_or_pd
@@ -546,15 +546,15 @@ The following table highlights the availability and expected performance of diff
    * - _mm_or_si128
      - 🟡 wasm_v128_or. VM must guess type.
    * - _mm_packs_epi16
-     - ❌ scalarized
+     - ✅ wasm_i8x16_narrow_i16x8
    * - _mm_packs_epi32
-     - ❌ scalarized
+     - ✅ wasm_i16x8_narrow_i32x4
    * - _mm_packus_epi16
-     - ❌ scalarized
+     - ✅ wasm_u8x16_narrow_i16x8
    * - _mm_pause
      - 💭 No-op.
    * - _mm_sad_epu8
-     - ❌ scalarized
+     - ⚠️ emulated with eleven SIMD instructions+const
    * - _mm_set_epi16
      - ✅ wasm_i16x8_make
    * - _mm_set_epi32
@@ -762,7 +762,7 @@ The following table highlights the availability and expected performance of diff
    * - _mm_hsub_pd
      - ⚠️ emulated with a SIMD add+two shuffles
    * - _mm_loaddup_pd
-     - 🟡 Scalar load + splat.
+     - 🟡 Virtual. wasm_v64x2_load_splat, VM must guess type.
    * - _mm_movedup_pd
      - 💡 emulated with a general shuffle
    * - _MM_GET_DENORMALS_ZERO_MODE
@@ -783,11 +783,11 @@ The following table highlights the availability and expected performance of diff
    * - Intrinsic name
      - WebAssembly SIMD support
    * - _mm_abs_epi8
-     - ⚠️ emulated with a SIMD shift+xor+add
+     - ✅ wasm_i8x16_abs
    * - _mm_abs_epi16
-     - ⚠️ emulated with a SIMD shift+xor+add
+     - ✅ wasm_i16x8_abs
    * - _mm_abs_epi32
-     - ⚠️ emulated with a SIMD shift+xor+add
+     - ✅ wasm_i32x4_abs
    * - _mm_alignr_epi8
      - ⚠️ emulated with a SIMD or+two shifts
    * - _mm_hadd_epi16
@@ -803,17 +803,17 @@ The following table highlights the availability and expected performance of diff
    * - _mm_hsubs_epi16
      - ⚠️ emulated with a SIMD subs+two shuffles
    * - _mm_maddubs_epi16
-     - 💣 scalarized
+     - ⚠️ emulated with SIMD saturated add+four shifts+two muls+and+const
    * - _mm_mulhrs_epi16
-     - 💣 scalarized (TODO: emulatable in SIMD?)
+     - ⚠️ emulated with SIMD four widen+two muls+four adds+complex shuffle+const
    * - _mm_shuffle_epi8
-     - 💣 scalarized (TODO: use wasm_v8x16_swizzle when available)
+     - ⚠️ emulated with a SIMD swizzle+and+const
    * - _mm_sign_epi8
-     - ⚠️ emulated with a SIMD complex shuffle+cmp+xor+andnot
+     - ⚠️ emulated with SIMD two cmp+two logical+add
    * - _mm_sign_epi16
-     - ⚠️ emulated with a SIMD shr+cmp+xor+andnot
+     - ⚠️ emulated with SIMD two cmp+two logical+add
    * - _mm_sign_epi32
-     - ⚠️ emulated with a SIMD shr+cmp+xor+andnot
+     - ⚠️ emulated with SIMD two cmp+two logical+add
 
 ⚫ The SSSE3 functions that deal with 64-bit wide MMX registers are not available:
  -  _mm_abs_pi8, _mm_abs_pi16, _mm_abs_pi32, _mm_alignr_pi8, _mm_hadd_pi16, _mm_hadd_pi32, _mm_hadds_pi16, _mm_hsub_pi16, _mm_hsub_pi32, _mm_hsubs_pi16, _mm_maddubs_pi16, _mm_mulhrs_pi16, _mm_shuffle_pi8, _mm_sign_pi8, _mm_sign_pi16 and _mm_sign_pi32
@@ -849,31 +849,31 @@ The following table highlights the availability and expected performance of diff
    * - _mm_ceil_ss
      - ❌ scalarized
    * - _mm_cmpeq_epi64
-     - ❌ scalarized
+     - ⚠️ emulated with a SIMD cmp+and+shuffle
    * - _mm_cvtepi16_epi32
      - ✅ wasm_i32x4_widen_low_i16x8
    * - _mm_cvtepi16_epi64
-     - ❌ scalarized
+     - ⚠️ emulated with a SIMD widen+const+cmp+shuffle
    * - _mm_cvtepi32_epi64
-     - ❌ scalarized
+     - ⚠️ emulated with SIMD const+cmp+shuffle
    * - _mm_cvtepi8_epi16
      - ✅ wasm_i16x8_widen_low_i8x16
    * - _mm_cvtepi8_epi32
-     - ❌ scalarized
+     - ⚠️ emulated with two SIMD widens
    * - _mm_cvtepi8_epi64
-     - ❌ scalarized
+     - ⚠️ emulated with two SIMD widens+const+cmp+shuffle
    * - _mm_cvtepu16_epi32
      - ✅ wasm_i32x4_widen_low_u16x8
    * - _mm_cvtepu16_epi64
-     - ❌ scalarized
+     - ⚠️ emulated with SIMD const+two shuffles
    * - _mm_cvtepu32_epi64
-     - ❌ scalarized
+     - ⚠️ emulated with SIMD const+shuffle
    * - _mm_cvtepu8_epi16
      - ✅ wasm_i16x8_widen_low_u8x16
    * - _mm_cvtepu8_epi32
-     - ❌ scalarized
+     - ⚠️ emulated with two SIMD widens
    * - _mm_cvtepu8_epi64
-     - ❌ scalarized
+     - ⚠️ emulated with SIMD const+three shuffles
    * - _mm_dp_pd
      - ⚠️ emulated with SIMD mul+add+setzero+2xblend
    * - _mm_dp_ps
@@ -1015,3 +1015,301 @@ The following table highlights the availability and expected performance of diff
      - 💣 emulated with complex SIMD+scalar sequence
 
 Only the 128-bit wide instructions from AVX instruction set are available. 256-bit wide AVX instructions are not provided.
+
+
+====================================================== 
+Compiling SIMD code targeting ARM NEON instruction set
+======================================================
+
+Emscripten supports compiling existing codebases that use ARM NEON by
+passing the `-mfpu=neon` directive to the compiler, and including the
+header `<arm_neon.h>`.
+
+In terms of performance, it is very important to note that only
+instructions which operate on 128-bit wide vectors are supported
+cleanly. This means that nearly any instruction which is not of a "q"
+variant (i.e. "vaddq" as opposed to "vadd") will be scalarized.
+
+These are pulled from `SIMDe repository on Github
+<https://github.com/simd-everywhere/simde>`_. To update emscripten
+with the latest SIMDe version, run `tools/simde_update.py`.
+
+The following table highlights the availability of various 128-bit
+wide intrinsics.
+
+Similarly to above, the following legend is used:
+ - ✅ Wasm SIMD has a native opcode that matches the NEON instruction, should yield native performance
+ - 💡 while the Wasm SIMD spec does not provide a proper performance guarantee, given a suitably smart enough compiler and a runtime VM path, this intrinsic should be able to generate the identical native NEON instruction.
+ - ⚠️ the underlying NEON instruction is not available, but it is emulated via at most few other Wasm SIMD instructions, causing a small penalty.
+ - ❌ the underlying NEON instruction is not exposed by the Wasm SIMD specification, so it must be emulated via a slow path, e.g. a sequence of several slower SIMD instructions, or a scalar implementation.
+ - ⚫ the given NEON intrinsic is not available. Referencing the intrinsic will cause a compiler error.
+
+For detailed information on each intrinsic function, refer to `NEON Intrinsics Reference
+<https://developer.arm.com/architectures/instruction-sets/simd-isas/neon/intrinsics>`_.
+
+.. list-table:: NEON Intrinsics
+   :widths: 20 30
+   :header-rows: 1
+
+   * - Intrinsic name
+     - Wasm SIMD Support
+   * - vaba
+     - ⚫ Not implemented, will trigger compiler error
+   * - vabal
+     - ⚫ Not implemented, will trigger compiler error
+   * - vabd
+     - ⚫ Not implemented, will trigger compiler error
+   * - vabdl
+     - ⚫ Not implemented, will trigger compiler error
+   * - vabs
+     - native
+   * - vadd
+     - native
+   * - vaddl
+     - ⚫ Not implemented, will trigger compiler error
+   * - vaddlv
+     - ⚫ Not implemented, will trigger compiler error
+   * - vaddv
+     - ⚫ Not implemented, will trigger compiler error
+   * - vaddw 
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vand 
+     - native
+   * - vbic
+     - ⚫ Not implemented, will trigger compiler error
+   * - vbsl
+     - native
+   * - vcagt
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vceq
+     - 💡 Depends on a smart enough compiler, but should be near native
+   * - vceqz
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vcge
+     - native
+   * - vcgez
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vcgt
+     - native
+   * - vcgtz
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vcle
+     - native
+   * - vclez
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vcls
+     - ⚫ Not implemented, will trigger compiler error
+   * - vclt
+     - native
+   * - vcltz 
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vcnt
+     - ⚫ Not implemented, will trigger compiler error
+   * - vclz
+     - ⚫ Not implemented, will trigger compiler error
+   * - vcombine 
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vcreate
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vdot
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vdot_lane
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vdup
+     - ⚫ Not implemented, will trigger compiler error
+   * - vdup_n
+     - native
+   * - veor
+     - native
+   * - vext
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vget_lane
+     - native
+   * - vhadd
+     - ⚫ Not implemented, will trigger compiler error
+   * - vhsub
+     - ⚫ Not implemented, will trigger compiler error
+   * - vld1
+     - native
+   * - vld2
+     - ⚫ Not implemented, will trigger compiler error
+   * - vld3
+     - 💡 Depends on a smart enough compiler, but should be near native
+   * - vld4
+     - 💡 Depends on a smart enough compiler, but should be near native
+   * - vmax
+     - native
+   * - vmaxv
+     - ⚫ Not implemented, will trigger compiler error
+   * - vmin
+     - native
+   * - vminv
+     - ⚫ Not implemented, will trigger compiler error
+   * - vmla 
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vmlal
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vmls
+     - ⚫ Not implemented, will trigger compiler error
+   * - vmlsl
+     - ⚫ Not implemented, will trigger compiler error
+   * - vmovl
+     - native
+   * - vmul
+     - native
+   * - vmul_n 
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vmull 
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vmull_n
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vmull_high
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vmvn
+     - native
+   * - vneg
+     - native
+   * - vorn
+     - ⚫ Not implemented, will trigger compiler error
+   * - vorr
+     - native
+   * - vpadal
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vpadd
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vpaddl 
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vpmax
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vpmin
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vpminnm
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqabs
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqabsb
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqadd 
+     - 💡 Depends on a smart enough compiler, but should be near native
+   * - vqaddb
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqdmulh  
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vqneg
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqnegb
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqrdmulh
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqrshl
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqrshlb
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqshl
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqshlb
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqsub
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqsubb
+     - ⚫ Not implemented, will trigger compiler error
+   * - vqtbl1
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vqtbl2
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vqtbl3
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vqtbl4
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vqtbx1
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vqtbx2
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vqtbx3
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vqtbx4
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vrbit
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vreinterpret
+     - 💡 Depends on a smart enough compiler, but should be near native
+   * - vrev16
+     - native
+   * - vrev32
+     - native
+   * - vrev64
+     - native
+   * - vrhadd
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vrshl
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vrshr_n
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vrsra_n
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vset_lane
+     - native
+   * - vshl
+     - scalaried
+   * - vshl_n
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vshr_n
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vsra_n
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vst1
+     - native
+   * - vst1_lane
+     - 💡 Depends on a smart enough compiler, but should be near native
+   * - vst2
+     - ⚫ Not implemented, will trigger compiler error
+   * - vst3
+     - 💡 Depends on a smart enough compiler, but should be near native
+   * - vst4
+     - 💡 Depends on a smart enough compiler, but should be near native
+   * - vsub
+     - native
+   * - vsubl
+     - ⚠ Does not have direct implementation, but is emulated using fast NEON instructions
+   * - vsubw
+     - ⚫ Not implemented, will trigger compiler error
+   * - vtbl1
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vtbl2
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vtbl3
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vtbl4
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vtbx1
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vtbx2
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vtbx3
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vtbx4
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vtrn
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vtrn1
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vtrn2
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vtst
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vuqadd
+     - ⚫ Not implemented, will trigger compiler error
+   * - vuqaddb
+     - ⚫ Not implemented, will trigger compiler error
+   * - vuzp
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vuzp1
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vuzp2
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vzip
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vzip1
+     - ❌ Will be emulated with slow instructions, or scalarized
+   * - vzip2
+     - ❌ Will be emulated with slow instructions, or scalarized

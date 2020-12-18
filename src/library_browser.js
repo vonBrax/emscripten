@@ -6,7 +6,7 @@
 
 // Utilities for browser environments
 var LibraryBrowser = {
-  $Browser__deps: ['emscripten_set_main_loop', 'emscripten_set_main_loop_timing'],
+  $Browser__deps: ['$setMainLoop', 'emscripten_set_main_loop_timing'],
   $Browser__postset: 'Module["requestFullscreen"] = function Module_requestFullscreen(lockPointer, resizeCanvas) { Browser.requestFullscreen(lockPointer, resizeCanvas) };\n' + // exports
 #if ASSERTIONS
                      'Module["requestFullScreen"] = function Module_requestFullScreen() { Browser.requestFullScreen() };\n' +
@@ -41,7 +41,7 @@ var LibraryBrowser = {
         var timingValue = Browser.mainLoop.timingValue;
         var func = Browser.mainLoop.func;
         Browser.mainLoop.func = null;
-        _emscripten_set_main_loop(func, 0, false, Browser.mainLoop.arg, true /* do not set timing and call scheduler, we will do it on the next lines */);
+        setMainLoop(func, 0, false, Browser.mainLoop.arg, true /* do not set timing and call scheduler, we will do it on the next lines */);
         _emscripten_set_main_loop_timing(timingMode, timingValue);
         Browser.mainLoop.scheduler();
       },
@@ -73,6 +73,8 @@ var LibraryBrowser = {
           func();
         } catch (e) {
           if (e instanceof ExitStatus) {
+            return;
+          } else if (e == 'unwind') {
             return;
           } else {
             if (e && typeof e === 'object' && e.stack) err('exception thrown: ' + [e, e.stack]);
@@ -232,7 +234,6 @@ var LibraryBrowser = {
       };
       Module['preloadPlugins'].push(audioPlugin);
 
-#if WASM
 #if MAIN_MODULE
       var wasmPlugin = {};
       wasmPlugin['asyncWasmLoadPromise'] = new Promise(
@@ -259,7 +260,6 @@ var LibraryBrowser = {
       };
       Module['preloadPlugins'].push(wasmPlugin);
 #endif // MAIN_MODULE
-#endif // WASM
 
       // Canvas event setup
 
@@ -829,7 +829,7 @@ var LibraryBrowser = {
     function doCallback(callback) {
       if (callback) {
         var stack = stackSave();
-        {{{ makeDynCall('vi') }}}(callback, allocate(intArrayFromString(_file), 'i8', ALLOC_STACK));
+        {{{ makeDynCall('vi', 'callback') }}}(allocate(intArrayFromString(_file), ALLOC_STACK));
         stackRestore(stack);
       }
     }
@@ -857,16 +857,46 @@ var LibraryBrowser = {
     );
   },
 
+  $funcWrappers: {},
+
+  $getFuncWrapper__deps: ['$funcWrappers', '$dynCall'],
+  $getFuncWrapper: function(func, sig) {
+    if (!func) return; // on null pointer, return undefined
+    assert(sig);
+    if (!funcWrappers[sig]) {
+      funcWrappers[sig] = {};
+    }
+    var sigCache = funcWrappers[sig];
+    if (!sigCache[func]) {
+      // optimize away arguments usage in common cases
+      if (sig.length === 1) {
+        sigCache[func] = function dynCall_wrapper() {
+          return dynCall(sig, func);
+        };
+      } else if (sig.length === 2) {
+        sigCache[func] = function dynCall_wrapper(arg) {
+          return dynCall(sig, func, [arg]);
+        };
+      } else {
+        // general case
+        sigCache[func] = function dynCall_wrapper() {
+          return dynCall(sig, func, Array.prototype.slice.call(arguments));
+        };
+      }
+    }
+    return sigCache[func];
+  },
+
   emscripten_async_wget_data__proxy: 'sync',
   emscripten_async_wget_data__sig: 'viiii',
   emscripten_async_wget_data: function(url, arg, onload, onerror) {
     Browser.asyncLoad(UTF8ToString(url), function(byteArray) {
       var buffer = _malloc(byteArray.length);
       HEAPU8.set(byteArray, buffer);
-      {{{ makeDynCall('viii') }}}(onload, arg, buffer, byteArray.length);
+      {{{ makeDynCall('viii', 'onload') }}}(arg, buffer, byteArray.length);
       _free(buffer);
     }, function() {
-      if (onerror) {{{ makeDynCall('vi') }}}(onerror, arg);
+      if (onerror) {{{ makeDynCall('vi', 'onerror') }}}(arg);
     }, true /* no need for run dependency, this is async but will not do any prepare etc. step */ );
   },
 
@@ -904,11 +934,11 @@ var LibraryBrowser = {
         FS.createDataFile( _file.substr(0, index), _file.substr(index + 1), new Uint8Array(/** @type{ArrayBuffer}*/(http.response)), true, true, false);
         if (onload) {
           var stack = stackSave();
-          {{{ makeDynCall('viii') }}}(onload, handle, arg, allocate(intArrayFromString(_file), 'i8', ALLOC_STACK));
+          {{{ makeDynCall('viii', 'onload') }}}(handle, arg, allocate(intArrayFromString(_file), ALLOC_STACK));
           stackRestore(stack);
         }
       } else {
-        if (onerror) {{{ makeDynCall('viii') }}}(onerror, handle, arg, http.status);
+        if (onerror) {{{ makeDynCall('viii', 'onerror') }}}(handle, arg, http.status);
       }
 
       delete Browser.wgetRequests[handle];
@@ -916,7 +946,7 @@ var LibraryBrowser = {
 
     // ERROR
     http.onerror = function http_onerror(e) {
-      if (onerror) {{{ makeDynCall('viii') }}}(onerror, handle, arg, http.status);
+      if (onerror) {{{ makeDynCall('viii', 'onerror') }}}(handle, arg, http.status);
       delete Browser.wgetRequests[handle];
     };
 
@@ -924,7 +954,7 @@ var LibraryBrowser = {
     http.onprogress = function http_onprogress(e) {
       if (e.lengthComputable || (e.lengthComputable === undefined && e.total != 0)) {
         var percentComplete = (e.loaded / e.total)*100;
-        if (onprogress) {{{ makeDynCall('viii') }}}(onprogress, handle, arg, percentComplete);
+        if (onprogress) {{{ makeDynCall('viii', 'onprogress') }}}(handle, arg, percentComplete);
       }
     };
 
@@ -965,10 +995,10 @@ var LibraryBrowser = {
         var byteArray = new Uint8Array(/** @type{ArrayBuffer} */(http.response));
         var buffer = _malloc(byteArray.length);
         HEAPU8.set(byteArray, buffer);
-        if (onload) {{{ makeDynCall('viiii') }}}(onload, handle, arg, buffer, byteArray.length);
+        if (onload) {{{ makeDynCall('viiii', 'onload') }}}(handle, arg, buffer, byteArray.length);
         if (free) _free(buffer);
       } else {
-        if (onerror) {{{ makeDynCall('viiii') }}}(onerror, handle, arg, http.status, http.statusText);
+        if (onerror) {{{ makeDynCall('viiii', 'onerror') }}}(handle, arg, http.status, http.statusText);
       }
       delete Browser.wgetRequests[handle];
     };
@@ -976,14 +1006,14 @@ var LibraryBrowser = {
     // ERROR
     http.onerror = function http_onerror(e) {
       if (onerror) {
-        {{{ makeDynCall('viiii') }}}(onerror, handle, arg, http.status, http.statusText);
+        {{{ makeDynCall('viiii', 'onerror') }}}(handle, arg, http.status, http.statusText);
       }
       delete Browser.wgetRequests[handle];
     };
 
     // PROGRESS
     http.onprogress = function http_onprogress(e) {
-      if (onprogress) {{{ makeDynCall('viiii') }}}(onprogress, handle, arg, e.loaded, e.lengthComputable || e.lengthComputable === undefined ? e.total : 0);
+      if (onprogress) {{{ makeDynCall('viiii', 'onprogress') }}}(handle, arg, e.loaded, e.lengthComputable || e.lengthComputable === undefined ? e.total : 0);
     };
 
     // ABORT
@@ -1027,10 +1057,10 @@ var LibraryBrowser = {
       PATH.basename(_file),
       new Uint8Array(data.object.contents), true, true,
       function() {
-        if (onload) {{{ makeDynCall('vi') }}}(onload, file);
+        if (onload) {{{ makeDynCall('vi', 'onload') }}}(file);
       },
       function() {
-        if (onerror) {{{ makeDynCall('vi') }}}(onerror, file);
+        if (onerror) {{{ makeDynCall('vi', 'onerror') }}}(file);
       },
       true // don'tCreateFile - it's already there
     );
@@ -1054,10 +1084,10 @@ var LibraryBrowser = {
       {{{ makeHEAPView('U8', 'data', 'data + size') }}},
       true, true,
       function() {
-        if (onload) {{{ makeDynCall('vii') }}}(onload, arg, cname);
+        if (onload) {{{ makeDynCall('vii', 'onload') }}}(arg, cname);
       },
       function() {
-        if (onerror) {{{ makeDynCall('vi') }}}(onerror, arg);
+        if (onerror) {{{ makeDynCall('vi', 'onerror') }}}(arg);
       },
       true // don'tCreateFile - it's already there
     );
@@ -1076,8 +1106,8 @@ var LibraryBrowser = {
 
   // TODO: currently not callable from a pthread, but immediately calls onerror() if not on main thread.
   emscripten_async_load_script: function(url, onload, onerror) {
-    onload = getFuncWrapper(onload, 'v');
-    onerror = getFuncWrapper(onerror, 'v');
+    onload = {{{ makeDynCall('v', 'onload') }}};
+    onerror = {{{ makeDynCall('v', 'onerror') }}};
 
 #if USE_PTHREADS
     if (ENVIRONMENT_IS_PTHREAD) {
@@ -1163,31 +1193,26 @@ var LibraryBrowser = {
     return 0;
   },
 
-  // Runs natively in pthread, no __proxy needed.
-#if OFFSCREEN_FRAMEBUFFER
-  emscripten_set_main_loop__deps: ['emscripten_set_main_loop_timing', 'emscripten_get_now', 'emscripten_webgl_commit_frame'],
-#else
-  emscripten_set_main_loop__deps: ['emscripten_set_main_loop_timing', 'emscripten_get_now'],
-#endif
+  emscripten_set_main_loop__deps: ['$setMainLoop'],
   emscripten_set_main_loop__docs: '/** @param {number|boolean=} noSetTiming */',
   emscripten_set_main_loop: function(func, fps, simulateInfiniteLoop, arg, noSetTiming) {
+    var browserIterationFunc = {{{ makeDynCall('v', 'func') }}};
+    setMainLoop(browserIterationFunc, fps, simulateInfiniteLoop, arg, noSetTiming);
+  },
+
+  // Runs natively in pthread, no __proxy needed.
+#if OFFSCREEN_FRAMEBUFFER
+  $setMainLoop__deps: ['emscripten_set_main_loop_timing', 'emscripten_get_now', 'emscripten_webgl_commit_frame'],
+#else
+  $setMainLoop__deps: ['emscripten_set_main_loop_timing', 'emscripten_get_now'],
+#endif
+  $setMainLoop: function(browserIterationFunc, fps, simulateInfiniteLoop, arg, noSetTiming) {
     noExitRuntime = true;
 
     assert(!Browser.mainLoop.func, 'emscripten_set_main_loop: there can only be one main loop function at once: call emscripten_cancel_main_loop to cancel the previous one before setting a new one with different parameters.');
 
-    Browser.mainLoop.func = func;
+    Browser.mainLoop.func = browserIterationFunc;
     Browser.mainLoop.arg = arg;
-
-    var browserIterationFunc;
-    if (typeof arg !== 'undefined') {
-      browserIterationFunc = function() {
-        Module['dynCall_vi'](func, arg);
-      };
-    } else {
-      browserIterationFunc = function() {
-        Module['dynCall_v'](func);
-      };
-    }
 
 #if USE_CLOSURE_COMPILER
     // Closure compiler bug(?): Closure does not see that the assignment
@@ -1304,9 +1329,10 @@ var LibraryBrowser = {
   },
 
   // Runs natively in pthread, no __proxy needed.
-  emscripten_set_main_loop_arg__deps: ['emscripten_set_main_loop'],
+  emscripten_set_main_loop_arg__deps: ['$setMainLoop'],
   emscripten_set_main_loop_arg: function(func, arg, fps, simulateInfiniteLoop) {
-    _emscripten_set_main_loop(func, fps, simulateInfiniteLoop, arg);
+    var browserIterationFunc = function() { {{{ makeDynCall('vi', 'func') }}}(arg); };
+    setMainLoop(browserIterationFunc, fps, simulateInfiniteLoop, arg);
   },
 
   // Runs natively in pthread, no __proxy needed.
@@ -1328,7 +1354,7 @@ var LibraryBrowser = {
   // Runs natively in pthread, no __proxy needed.
   _emscripten_push_main_loop_blocker: function(func, arg, name) {
     Browser.mainLoop.queue.push({ func: function() {
-      {{{ makeDynCall('vi') }}}(func, arg);
+      {{{ makeDynCall('vi', 'func') }}}(arg);
     }, name: UTF8ToString(name), counted: true });
     Browser.mainLoop.updateStatus();
   },
@@ -1336,7 +1362,7 @@ var LibraryBrowser = {
   // Runs natively in pthread, no __proxy needed.
   _emscripten_push_uncounted_main_loop_blocker: function(func, arg, name) {
     Browser.mainLoop.queue.push({ func: function() {
-      {{{ makeDynCall('vi') }}}(func, arg);
+      {{{ makeDynCall('vi', 'func') }}}(arg);
     }, name: UTF8ToString(name), counted: false });
     Browser.mainLoop.updateStatus();
   },
@@ -1353,7 +1379,7 @@ var LibraryBrowser = {
     noExitRuntime = true;
 
     function wrapper() {
-      getFuncWrapper(func, 'vi')(arg);
+      {{{ makeDynCall('vi', 'func') }}}(arg);
     }
 
     if (millis >= 0) {
@@ -1379,6 +1405,36 @@ var LibraryBrowser = {
 #endif
     noExitRuntime = false;
     exit(status);
+  },
+
+  emscripten_get_window_title__proxy: 'sync',
+  emscripten_get_window_title__sig: 'iv',
+  emscripten_get_window_title: function() {
+    var buflen = 256;
+
+    if (!_emscripten_get_window_title.buffer) {
+      _emscripten_get_window_title.buffer = _malloc(buflen);
+    }
+
+    writeAsciiToMemory(
+      document.title.slice(0, buflen - 1),
+      _emscripten_get_window_title.buffer
+    );
+
+    return _emscripten_get_window_title.buffer;
+  },
+
+  emscripten_set_window_title__proxy: 'sync',
+  emscripten_set_window_title__sig: 'vi',
+  emscripten_set_window_title: function(title) {
+    setWindowTitle(AsciiToString(title));
+  },
+
+  emscripten_get_screen_size__proxy: 'sync',
+  emscripten_get_screen_size__sig: 'vii',
+  emscripten_get_screen_size: function(width, height) {
+    {{{ makeSetValue('width', '0', 'screen.width', 'i32') }}};
+    {{{ makeSetValue('height', '0', 'screen.height', 'i32') }}};
   },
 
   emscripten_hide_mouse__proxy: 'sync',
@@ -1473,7 +1529,7 @@ var LibraryBrowser = {
     if (callback) {
       callbackId = info.callbacks.length;
       info.callbacks.push({
-        func: getFuncWrapper(callback, 'viii'),
+        func: {{{ makeDynCall('viii', 'callback') }}},
         arg: arg
       });
       info.awaited++;

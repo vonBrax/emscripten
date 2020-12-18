@@ -3,15 +3,18 @@
 # University of Illinois/NCSA Open Source License.  Both these licenses can be
 # found in the LICENSE file.
 
-from __future__ import print_function
+import json
 import os
 import shutil
+from subprocess import Popen
 
 if __name__ == '__main__':
   raise Exception('do not run this file directly; do something like: tests/runner.py interactive')
 
+from runner import parameterized
 from runner import BrowserCore, path_from_root
-from tools.shared import Popen, EMCC, WINDOWS, which
+from tools.shared import EMCC, WINDOWS
+from tools.utils import which
 
 
 class interactive(BrowserCore):
@@ -59,10 +62,9 @@ class interactive(BrowserCore):
     shutil.copyfile(path_from_root('tests', 'sounds', 'noise.ogg'), os.path.join(self.get_dir(), 'noise.ogg'))
     shutil.copyfile(path_from_root('tests', 'sounds', 'the_entertainer.ogg'), os.path.join(self.get_dir(), 'the_entertainer.ogg'))
     open(os.path.join(self.get_dir(), 'bad.ogg'), 'w').write('I claim to be audio, but am lying')
-    open(os.path.join(self.get_dir(), 'sdl_audio.c'), 'w').write(self.with_report_result(open(path_from_root('tests', 'sdl_audio.c')).read()))
 
     # use closure to check for a possible bug with closure minifying away newer Audio() attributes
-    Popen([EMCC, '-O2', '--closure', '1', '--minify', '0', os.path.join(self.get_dir(), 'sdl_audio.c'), '--preload-file', 'sound.ogg', '--preload-file', 'sound2.wav', '--embed-file', 'the_entertainer.ogg', '--preload-file', 'noise.ogg', '--preload-file', 'bad.ogg', '-o', 'page.html', '-s', 'EXPORTED_FUNCTIONS=["_main", "_play", "_play2"]']).communicate()
+    self.compile_btest(['-O2', '--closure', '1', '--minify', '0', path_from_root('tests', 'sdl_audio.c'), '--preload-file', 'sound.ogg', '--preload-file', 'sound2.wav', '--embed-file', 'the_entertainer.ogg', '--preload-file', 'noise.ogg', '--preload-file', 'bad.ogg', '-o', 'page.html', '-s', 'EXPORTED_FUNCTIONS=["_main", "_play", "_play2"]'])
     self.run_browser('page.html', '', '/report_result?1')
 
     # print('SDL2')
@@ -76,61 +78,69 @@ class interactive(BrowserCore):
 
   def test_sdl_audio_mix_channels(self):
     shutil.copyfile(path_from_root('tests', 'sounds', 'noise.ogg'), os.path.join(self.get_dir(), 'sound.ogg'))
-    open(os.path.join(self.get_dir(), 'sdl_audio_mix_channels.c'), 'w').write(self.with_report_result(open(path_from_root('tests', 'sdl_audio_mix_channels.c')).read()))
 
-    Popen([EMCC, '-O2', '--minify', '0', os.path.join(self.get_dir(), 'sdl_audio_mix_channels.c'), '--preload-file', 'sound.ogg', '-o', 'page.html']).communicate()
+    self.compile_btest(['-O2', '--minify', '0', path_from_root('tests', 'sdl_audio_mix_channels.c'), '--preload-file', 'sound.ogg', '-o', 'page.html'])
     self.run_browser('page.html', '', '/report_result?1')
 
   def test_sdl_audio_mix(self):
     shutil.copyfile(path_from_root('tests', 'sounds', 'pluck.ogg'), os.path.join(self.get_dir(), 'sound.ogg'))
     shutil.copyfile(path_from_root('tests', 'sounds', 'the_entertainer.ogg'), os.path.join(self.get_dir(), 'music.ogg'))
     shutil.copyfile(path_from_root('tests', 'sounds', 'noise.ogg'), os.path.join(self.get_dir(), 'noise.ogg'))
-    open(os.path.join(self.get_dir(), 'sdl_audio_mix.c'), 'w').write(self.with_report_result(open(path_from_root('tests', 'sdl_audio_mix.c')).read()))
 
-    Popen([EMCC, '-O2', '--minify', '0', os.path.join(self.get_dir(), 'sdl_audio_mix.c'), '--preload-file', 'sound.ogg', '--preload-file', 'music.ogg', '--preload-file', 'noise.ogg', '-o', 'page.html']).communicate()
+    self.compile_btest(['-O2', '--minify', '0', path_from_root('tests', 'sdl_audio_mix.c'), '--preload-file', 'sound.ogg', '--preload-file', 'music.ogg', '--preload-file', 'noise.ogg', '-o', 'page.html'])
     self.run_browser('page.html', '', '/report_result?1')
 
   def test_sdl_audio_panning(self):
     shutil.copyfile(path_from_root('tests', 'sounds', 'the_entertainer.wav'), os.path.join(self.get_dir(), 'the_entertainer.wav'))
-    open(os.path.join(self.get_dir(), 'sdl_audio_panning.c'), 'w').write(self.with_report_result(open(path_from_root('tests', 'sdl_audio_panning.c')).read()))
 
     # use closure to check for a possible bug with closure minifying away newer Audio() attributes
-    Popen([EMCC, '-O2', '--closure', '1', '--minify', '0', os.path.join(self.get_dir(), 'sdl_audio_panning.c'), '--preload-file', 'the_entertainer.wav', '-o', 'page.html', '-s', 'EXPORTED_FUNCTIONS=["_main", "_play"]']).communicate()
+    self.compile_btest(['-O2', '--closure', '1', '--minify', '0', path_from_root('tests', 'sdl_audio_panning.c'), '--preload-file', 'the_entertainer.wav', '-o', 'page.html', '-s', 'EXPORTED_FUNCTIONS=["_main", "_play"]'])
     self.run_browser('page.html', '', '/report_result?1')
 
   def test_sdl_audio_beeps(self):
-    open('sdl_audio_beep.cpp', 'w').write(self.with_report_result(open(path_from_root('tests', 'sdl_audio_beep.cpp')).read()))
     # use closure to check for a possible bug with closure minifying away newer Audio() attributes
-    self.compile_btest(['sdl_audio_beep.cpp', '-O2', '--closure', '1', '--minify', '0', '-s', 'DISABLE_EXCEPTION_CATCHING=0', '-o', 'page.html'])
-    self.run_browser('page.html', '', '/report_result?1')
-
-  def test_sdl2_mixer(self):
-    shutil.copyfile(path_from_root('tests', 'sounds', 'alarmvictory_1.ogg'), os.path.join(self.get_dir(), 'sound.ogg'))
-    open(os.path.join(self.get_dir(), 'sdl2_mixer.c'), 'w').write(self.with_report_result(open(path_from_root('tests', 'sdl2_mixer.c')).read()))
-
-    Popen([EMCC, '-O2', '--minify', '0', os.path.join(self.get_dir(), 'sdl2_mixer.c'), '-s', 'USE_SDL=2', '-s', 'USE_SDL_MIXER=2', '-s', 'INITIAL_MEMORY=33554432', '--preload-file', 'sound.ogg', '-o', 'page.html']).communicate()
+    self.compile_btest([path_from_root('tests', 'sdl_audio_beep.cpp'), '-O2', '--closure', '1', '--minify', '0', '-s', 'DISABLE_EXCEPTION_CATCHING=0', '-o', 'page.html'])
     self.run_browser('page.html', '', '/report_result?1')
 
   def test_sdl2_mixer_wav(self):
     shutil.copyfile(path_from_root('tests', 'sounds', 'the_entertainer.wav'), os.path.join(self.get_dir(), 'sound.wav'))
-    open(os.path.join(self.get_dir(), 'sdl2_mixer_wav.c'), 'w').write(self.with_report_result(open(path_from_root('tests', 'sdl2_mixer_wav.c')).read()))
+    self.btest('sdl2_mixer_wav.c', expected='1', args=[
+      '-O2',
+      '-s', 'USE_SDL=2',
+      '-s', 'USE_SDL_MIXER=2',
+      '-s', 'INITIAL_MEMORY=33554432',
+      '--preload-file', 'sound.wav'
+    ])
 
-    Popen([EMCC, '-O2', '--minify', '0', os.path.join(self.get_dir(), 'sdl2_mixer_wav.c'), '-s', 'USE_SDL=2', '-s', 'USE_SDL_MIXER=2', '-s', 'INITIAL_MEMORY=33554432', '--preload-file', 'sound.wav', '-o', 'page.html']).communicate()
-    self.run_browser('page.html', '', '/report_result?1')
+  @parameterized({
+    'wav': ([],         '0',            'the_entertainer.wav'),
+    'ogg': (['ogg'],    'MIX_INIT_OGG', 'alarmvictory_1.ogg'),
+    'mp3': (['mp3'],    'MIX_INIT_MP3', 'pudinha.mp3'),
+  })
+  def test_sdl2_mixer_music(self, formats, flags, music_name):
+    shutil.copyfile(path_from_root('tests', 'sounds', music_name), music_name)
+    self.btest('sdl2_mixer_music.c', expected='1', args=[
+      '-O2',
+      '--minify', '0',
+      '--preload-file', music_name,
+      '-DSOUND_PATH=' + json.dumps(music_name),
+      '-DFLAGS=' + flags,
+      '-s', 'USE_SDL=2',
+      '-s', 'USE_SDL_MIXER=2',
+      '-s', 'SDL2_MIXER_FORMATS=' + json.dumps(formats),
+      '-s', 'INITIAL_MEMORY=33554432'
+    ])
 
   def zzztest_sdl2_audio_beeps(self):
-    open(os.path.join(self.get_dir(), 'sdl2_audio_beep.cpp'), 'w').write(self.with_report_result(open(path_from_root('tests', 'sdl2_audio_beep.cpp')).read()))
-
     # use closure to check for a possible bug with closure minifying away newer Audio() attributes
-    Popen([EMCC, '-O2', '--closure', '1', '--minify', '0', os.path.join(self.get_dir(), 'sdl2_audio_beep.cpp'), '-s', 'DISABLE_EXCEPTION_CATCHING=0', '-s', 'USE_SDL=2', '-o', 'page.html']).communicate()
+    self.compile_btest(['-O2', '--closure', '1', '--minify', '0', path_from_root('tests', 'sdl2_audio_beep.cpp'), '-s', 'DISABLE_EXCEPTION_CATCHING=0', '-s', 'USE_SDL=2', '-o', 'page.html'])
     self.run_browser('page.html', '', '/report_result?1')
 
   def test_openal_playback(self):
     shutil.copyfile(path_from_root('tests', 'sounds', 'audio.wav'), os.path.join(self.get_dir(), 'audio.wav'))
-    open(os.path.join(self.get_dir(), 'openal_playback.cpp'), 'w').write(self.with_report_result(open(path_from_root('tests', 'openal_playback.cpp')).read()))
 
     for args in [[], ['-s', 'USE_PTHREADS=1', '-s', 'PROXY_TO_PTHREAD=1']]:
-      Popen([EMCC, '-O2', os.path.join(self.get_dir(), 'openal_playback.cpp'), '--preload-file', 'audio.wav', '-o', 'page.html'] + args).communicate()
+      self.compile_btest(['-O2', path_from_root('tests', 'openal_playback.cpp'), '--preload-file', 'audio.wav', '-o', 'page.html'] + args)
       self.run_browser('page.html', '', '/report_result?1')
 
   def test_openal_buffers(self):

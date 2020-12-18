@@ -10,10 +10,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <time.h>
-#include <unistd.h>
+
+// ssize_t detection: usually stdint provides it, but not on windows apparently
+#ifdef _WIN32
+#ifdef _MSC_VER
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#else // _MSC_VER
+#ifdef _WIN64
+typedef signed long long ssize_t;
+#else // _WIN64
+typedef signed long ssize_t;
+#endif // _WIN64
+#endif // _MSC_VER
+#endif // _WIN32
 
 #include "wasm-rt.h"
 #include "wasm-rt-impl.h"
@@ -101,48 +112,6 @@ static void abort_with_message(const char* message) {
 static jmp_buf setjmp_stack[MAX_SETJMP_STACK];
 
 static u32 next_setjmp = 0;
-
-#define VOID_INVOKE_IMPL(name, typed_args, types, args, dyncall) \
-IMPORT_IMPL(void, name, typed_args, { \
-  VERBOSE_LOG("invoke " #name "  " #dyncall "\n"); \
-  u32 sp = Z_stackSaveZ_iv(); \
-  if (next_setjmp >= MAX_SETJMP_STACK) { \
-    abort_with_message("too many nested setjmps"); \
-  } \
-  u32 id = next_setjmp++; \
-  int result = setjmp(setjmp_stack[id]); \
-  if (result == 0) { \
-    (* dyncall) args; \
-    /* if we got here, no longjmp or exception happened, we returned normally */ \
-  } else { \
-    /* A longjmp or an exception took us here. */ \
-    Z_stackRestoreZ_vi(sp); \
-    Z_setThrewZ_vii(1, 0); \
-  } \
-  next_setjmp--; \
-});
-
-#define RETURNING_INVOKE_IMPL(ret, name, typed_args, types, args, dyncall) \
-IMPORT_IMPL(ret, name, typed_args, { \
-  VERBOSE_LOG("invoke " #name "  " #dyncall "\n"); \
-  u32 sp = Z_stackSaveZ_iv(); \
-  if (next_setjmp >= MAX_SETJMP_STACK) { \
-    abort_with_message("too many nested setjmps"); \
-  } \
-  u32 id = next_setjmp++; \
-  int result = setjmp(setjmp_stack[id]); \
-  ret returned_value = 0; \
-  if (result == 0) { \
-    returned_value = (* dyncall) args; \
-    /* if we got here, no longjmp or exception happened, we returned normally */ \
-  } else { \
-    /* A longjmp or an exception took us here. */ \
-    Z_stackRestoreZ_vi(sp); \
-    Z_setThrewZ_vii(1, 0); \
-  } \
-  next_setjmp--; \
-  return returned_value; \
-});
 
 // Declare an export that may be needed and may not be. For example if longjmp
 // is included then we need setThrew, but we must declare setThrew so that

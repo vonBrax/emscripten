@@ -71,7 +71,8 @@ var LibraryManager = {
       'library_html5.js',
       'library_stack_trace.js',
       'library_wasi.js',
-      'library_int53.js'
+      'library_int53.js',
+      'library_dylink.js'
     ];
 
     if (!EXCEPTION_HANDLING) {
@@ -181,8 +182,7 @@ var LibraryManager = {
     // Save the list for has() queries later.
     this.libraries = libraries;
 
-    for (var i = 0; i < libraries.length; i++) {
-      var filename = libraries[i];
+    for (var filename of libraries) {
       var src = read(filename);
       var processed = undefined;
       try {
@@ -216,15 +216,19 @@ var LibraryManager = {
     // (and makes it simpler to switch between SDL versions, fastcomp and non-fastcomp, etc.).
     var lib = LibraryManager.library;
     libloop: for (var x in lib) {
-      if (x.lastIndexOf('__') > 0) continue; // ignore __deps, __*
-      if (lib[x + '__asm']) continue; // ignore asm library functions, those need to be fully optimized
+      if (isJsLibraryConfigIdentifier(x)) {
+        var index = x.lastIndexOf('__');
+        var basename = x.slice(0, index);
+        if (!(basename in lib)) {
+          error('Missing library element `' + basename + '` for library config `' + x + '`');
+        }
+        continue;
+      }
       if (typeof lib[x] === 'string') {
         var target = x;
         while (typeof lib[target] === 'string') {
           // ignore code and variable assignments, aliases are just simple names
           if (lib[target].search(/[=({; ]/) >= 0) continue libloop;
-          // ignore trivial pass-throughs to Math.*
-          if (lib[target].indexOf('Math_') == 0) continue libloop;
           target = lib[target];
         }
         if (!isNaN(target)) continue; // This is a number, and so cannot be an alias target.
@@ -247,7 +251,14 @@ var LibraryManager = {
             error('Function ' + x + ' aliases to target function ' + target + ', but neither the alias or the target provide a signature. Please add a ' + target + "__sig: 'vifj...' annotation or a " + x + "__sig: 'vifj...' annotation to describe the type of function forwarding that is needed!");
           }
 
+          if (typeof lib[target] !== 'function') {
+            error(`no alias found for ${x}`);
+          }
+
           var argCount = sig.length - 1;
+          if (argCount !== lib[target].length) {
+            error(`incorrect number of arguments in signature of ${x} (declared: ${argCount}, expected: ${lib[target].length})`);
+          }
           var ret = sig == 'v' ? '' : 'return ';
           var args = genArgSequence(argCount).join(',');
           lib[x] = new Function(args, ret + '_' + target + '(' + args + ');');
@@ -257,35 +268,6 @@ var LibraryManager = {
         }
       }
     }
-
-    if (WASM_BACKEND) {
-      // all asm.js methods should just be run in JS. We should optimize them eventually into wasm. TODO
-      for (var x in lib) {
-        if (lib[x + '__asm']) {
-          lib[x + '__asm'] = undefined;
-        }
-      }
-    }
-
-    /*
-    // export code for CallHandlers.h
-    printErr('============================');
-    for (var x in this.library) {
-      var y = this.library[x];
-      if (typeof y === 'string' && x.indexOf('__sig') < 0 && x.indexOf('__postset') < 0 && y.indexOf(' ') < 0) {
-        printErr('DEF_REDIRECT_HANDLER(' + x + ', ' + y + ');');
-      }
-    }
-    printErr('============================');
-    for (var x in this.library) {
-      var y = this.library[x];
-      if (typeof y === 'string' && x.indexOf('__sig') < 0 && x.indexOf('__postset') < 0 && y.indexOf(' ') < 0) {
-        printErr('  SETUP_CALL_HANDLER(' + x + ');');
-      }
-    }
-    printErr('============================');
-    // end export code for CallHandlers.h
-    */
 
     this.loaded = true;
   },
@@ -305,7 +287,6 @@ var LibraryManager = {
   },
 
   isStubFunction: function(ident) {
-    if (SIDE_MODULE == 1) return false; // cannot eliminate these, as may be implement in the main module and imported by us
     var libCall = LibraryManager.library[ident.substr(1)];
     return typeof libCall === 'function' && libCall.toString().replace(/\s/g, '') === 'function(){}'
                                          && !(ident in Functions.implementedFunctions);
@@ -338,15 +319,12 @@ function isFSPrefixed(name) {
 
 // forcing the filesystem exports a few things by default
 function isExportedByForceFilesystem(name) {
-  return name === 'FS_createFolder' ||
-         name === 'FS_createPath' ||
+  return name === 'FS_createPath' ||
          name === 'FS_createDataFile' ||
          name === 'FS_createPreloadedFile' ||
          name === 'FS_createLazyFile' ||
-         name === 'FS_createLink' ||
          name === 'FS_createDevice' ||
          name === 'FS_unlink' ||
-         name === 'getMemory' ||
          name === 'addRunDependency' ||
          name === 'removeRunDependency';
 }
@@ -405,7 +383,6 @@ function exportRuntime() {
     'setValue',
     'getValue',
     'allocate',
-    'getMemory',
     'UTF8ArrayToString',
     'UTF8ToString',
     'stringToUTF8Array',
@@ -430,9 +407,6 @@ function exportRuntime() {
     'FS_createLink',
     'FS_createDevice',
     'FS_unlink',
-    'dynamicAlloc',
-    'loadDynamicLibrary',
-    'loadWebAssemblyModule',
     'getLEB',
     'getFunctionTables',
     'alignFunctionTables',
@@ -451,11 +425,6 @@ function exportRuntime() {
     'callMain',
     'abort',
   ];
-
-  function isJsLibraryConfigIdentifier(ident) {
-    return ident.endsWith('__sig') || ident.endsWith('__proxy') || ident.endsWith('__asm') || ident.endsWith('__inline')
-     || ident.endsWith('__deps') || ident.endsWith('__postset') || ident.endsWith('__docs') || ident.endsWith('__import');
-  }
 
   // Add JS library elements such as FS, GL, ENV, etc. These are prefixed with
   // '$ which indicates they are JS methods.
@@ -495,10 +464,7 @@ function exportRuntime() {
     // In pthreads mode, the following functions always need to be exported to
     // Module for closure compiler, and also for MODULARIZE (so worker.js can
     // access them).
-    var threadExports = ['PThread', '_pthread_self'];
-    if (WASM) {
-      threadExports.push('wasmMemory');
-    }
+    var threadExports = ['PThread', 'wasmMemory'];
     if (!MINIMAL_RUNTIME) {
       threadExports.push('ExitStatus');
     }
@@ -525,8 +491,6 @@ function exportRuntime() {
   var runtimeNumbers = [
     'ALLOC_NORMAL',
     'ALLOC_STACK',
-    'ALLOC_DYNAMIC',
-    'ALLOC_NONE',
   ];
   if (ASSERTIONS) {
     // check all exported things exist, warn about typos
@@ -537,11 +501,10 @@ function exportRuntime() {
       }
     }
   }
-  return runtimeElements.map(function(name) {
-    return maybeExport(name);
-  }).join('\n') + runtimeNumbers.map(function(name) {
-    return maybeExportNumber(name);
-  }).join('\n');
+  var exports = runtimeElements.map(function(name) { return maybeExport(name); });
+  exports = exports.concat(runtimeNumbers.map(function(name) { return maybeExportNumber(name); }));
+  exports = exports.filter(function(name) { return name != '' });
+  return exports.join('\n');
 }
 
 var PassManager = {
@@ -549,8 +512,6 @@ var PassManager = {
     print('\n//FORWARDED_DATA:' + JSON.stringify({
       Functions: Functions,
       EXPORTED_FUNCTIONS: EXPORTED_FUNCTIONS,
-      STATIC_BUMP: STATIC_BUMP, // updated with info from JS
-      DYNAMICTOP_PTR: DYNAMICTOP_PTR,
       ATINITS: ATINITS.join('\n'),
       ATMAINS: ATMAINS.join('\n'),
       ATEXITS: ATEXITS.join('\n'),

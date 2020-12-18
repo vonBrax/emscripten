@@ -6,63 +6,31 @@
 
 // === Auto-generated postamble setup entry stuff ===
 
-#if !WASM_BACKEND && !WASM
-// asm.js startup is synchronous
-Module['asm'] = asm;
-#endif
-
 {{{ exportRuntime() }}}
 
-#if MEM_INIT_IN_WASM == 0
-#if MEM_INIT_METHOD == 2
+#if !MEM_INIT_IN_WASM
+function runMemoryInitializer() {
 #if USE_PTHREADS
-if (memoryInitializer && !ENVIRONMENT_IS_PTHREAD) (function(s) {
+  if (!memoryInitializer || ENVIRONMENT_IS_PTHREAD) return;
 #else
-if (memoryInitializer) (function(s) {
-#endif
-  var i, n = s.length;
-#if ASSERTIONS
-  n -= 4;
-  var crc, bit, table = new Int32Array(256);
-  for (i = 0; i < 256; ++i) {
-    for (crc = i, bit = 0; bit < 8; ++bit)
-      crc = (crc >>> 1) ^ ((crc & 1) * 0xedb88320);
-    table[i] = crc >>> 0;
-  }
-  crc = -1;
-  crc = table[(crc ^ n) & 0xff] ^ (crc >>> 8);
-  crc = table[(crc ^ (n >>> 8)) & 0xff] ^ (crc >>> 8);
-  for (i = 0; i < s.length; ++i) {
-    crc = table[(crc ^ s.charCodeAt(i)) & 0xff] ^ (crc >>> 8);
-  }
-  assert(crc === 0, "memory initializer checksum");
-#endif
-  for (i = 0; i < n; ++i) {
-    HEAPU8[GLOBAL_BASE + i] = s.charCodeAt(i);
-  }
-})(memoryInitializer);
-#else
-#if USE_PTHREADS
-if (memoryInitializer && !ENVIRONMENT_IS_PTHREAD) {
-#else
-if (memoryInitializer) {
+  if (!memoryInitializer) return
 #endif
   if (!isDataURI(memoryInitializer)) {
     memoryInitializer = locateFile(memoryInitializer);
   }
   if (ENVIRONMENT_IS_NODE || ENVIRONMENT_IS_SHELL) {
     var data = readBinary(memoryInitializer);
-    HEAPU8.set(data, GLOBAL_BASE);
+    HEAPU8.set(data, {{{ GLOBAL_BASE }}});
   } else {
     addRunDependency('memory initializer');
     var applyMemoryInitializer = function(data) {
       if (data.byteLength) data = new Uint8Array(data);
 #if ASSERTIONS
       for (var i = 0; i < data.length; i++) {
-        assert(HEAPU8[GLOBAL_BASE + i] === 0, "area for memory initializer should not have been touched before it's loaded");
+        assert(HEAPU8[{{{ GLOBAL_BASE }}} + i] === 0, "area for memory initializer should not have been touched before it's loaded");
       }
 #endif
-      HEAPU8.set(data, GLOBAL_BASE);
+      HEAPU8.set(data, {{{ GLOBAL_BASE }}});
       // Delete the typed array that contains the large blob of the memory initializer request response so that
       // we won't keep unnecessary memory lying around. However, keep the XHR object itself alive so that e.g.
       // its .status field can still be accessed later.
@@ -120,12 +88,7 @@ if (memoryInitializer) {
     }
   }
 }
-#endif
 #endif // MEM_INIT_IN_WASM == 0
-
-#if CYBERDWARF
-  Module['cyberdwarf'] = _cyberdwarf_Debugger(cyberDWARFFile);
-#endif
 
 var calledRun;
 
@@ -165,7 +128,13 @@ function callMain(args) {
   var entryFunction = Module['__initialize'];
 #endif
 #else
+#if PROXY_TO_PTHREAD
+  // User requested the PROXY_TO_PTHREAD option, so call a stub main which pthread_create()s a new thread
+  // that will call the user's real main() for the application.
+  var entryFunction = Module['_emscripten_proxy_main'];
+#else
   var entryFunction = Module['_main'];
+#endif
 #endif
 
 #if MAIN_MODULE
@@ -198,15 +167,11 @@ function callMain(args) {
     var start = Date.now();
 #endif
 
-#if WASM_BACKEND && STACK_OVERFLOW_CHECK >= 2
-    Module['___set_stack_limit'](STACK_MAX);
+#if ABORT_ON_WASM_EXCEPTIONS
+    // See abortWrapperDepth in preamble.js!
+    abortWrapperDepth += 2; 
 #endif
 
-#if PROXY_TO_PTHREAD
-    // User requested the PROXY_TO_PTHREAD option, so call a stub main which pthread_create()s a new thread
-    // that will call the user's real main() for the application.
-    var ret = Module['_proxy_main'](argc, argv);
-#else
 #if STANDALONE_WASM
     entryFunction();
     // _start (in crt1.c) will call exit() if main return non-zero.  So we know
@@ -215,25 +180,28 @@ function callMain(args) {
 #else
     var ret = entryFunction(argc, argv);
 #endif // STANDALONE_WASM
-#endif // PROXY_TO_PTHREAD
 
 #if BENCHMARK
     Module.realPrint('main() took ' + (Date.now() - start) + ' milliseconds');
 #endif
 
-    // In PROXY_TO_PTHREAD builds, we should never exit the runtime below, as execution is asynchronously handed
-    // off to a pthread.
-#if !PROXY_TO_PTHREAD
-#if WASM_BACKEND && ASYNCIFY
+    // In PROXY_TO_PTHREAD builds, we should never exit the runtime below, as
+    // execution is asynchronously handed off to a pthread.
+#if PROXY_TO_PTHREAD
+#if ASSERTIONS
+    assert(ret == 0, '_emscripten_proxy_main failed to start proxy thread: ' + ret);
+#endif
+#else
+#if ASYNCIFY
     // if we are saving the stack, then do not call exit, we are not
     // really exiting now, just unwinding the JS stack
     if (!noExitRuntime) {
-#endif // WASM_BACKEND && ASYNCIFY
-    // if we're not running an evented main loop, it's time to exit
+#endif // ASYNCIFY
+      // if we're not running an evented main loop, it's time to exit
       exit(ret, /* implicit = */ true);
-#if WASM_BACKEND && ASYNCIFY
+#if ASYNCIFY
     }
-#endif // WASM_BACKEND && ASYNCIFY
+#endif // ASYNCIFY
   }
   catch(e) {
     if (e instanceof ExitStatus) {
@@ -255,11 +223,14 @@ function callMain(args) {
 #endif // !PROXY_TO_PTHREAD
   } finally {
     calledMain = true;
+
+#if ABORT_ON_WASM_EXCEPTIONS
+    // See abortWrapperDepth in preamble.js!
+    abortWrapperDepth -= 2; 
+#endif
   }
 }
 #endif // HAS_MAIN
-
-{{GLOBAL_VARS}}
 
 /** @type {function(Array=)} */
 function run(args) {
@@ -273,6 +244,15 @@ function run(args) {
   }
 
 #if STACK_OVERFLOW_CHECK
+  // This is normally called automatically during __wasm_call_ctors but need to
+  // get these values before even running any of the ctors so we call it redundantly
+  // here.
+  // TODO(sbc): Move writeStackCookie to native to to avoid this.
+#if RELOCATABLE
+  _emscripten_stack_set_limits({{{ getQuoted('STACK_BASE') }}}, {{{ getQuoted('STACK_MAX') }}});
+#else
+  _emscripten_stack_init();
+#endif
   writeStackCookie();
 #endif
 
@@ -345,8 +325,8 @@ function checkUnflushedContent() {
   // How we flush the streams depends on whether we are in SYSCALLS_REQUIRE_FILESYSTEM=0
   // mode (which has its own special function for this; otherwise, all
   // the code is inside libc)
-  var print = out;
-  var printErr = err;
+  var oldOut = out;
+  var oldErr = err;
   var has = false;
   out = err = function(x) {
     has = true;
@@ -373,8 +353,8 @@ function checkUnflushedContent() {
     });
 #endif
   } catch(e) {}
-  out = print;
-  err = printErr;
+  out = oldOut;
+  err = oldErr;
   if (has) {
     warnOnce('stdio streams had content in them that was not flushed. you should set EXIT_RUNTIME to 1 (see the FAQ), or make sure to emit a newline when you printf etc.');
 #if FILESYSTEM == 0 || SYSCALLS_REQUIRE_FILESYSTEM == 0
@@ -401,25 +381,39 @@ function exit(status, implicit) {
     return;
   }
 
+#if USE_PTHREADS
+  if (!implicit) {
+    if (ENVIRONMENT_IS_PTHREAD) {
+#if ASSERTIONS
+      err('Pthread 0x' + _pthread_self().toString(16) + ' called exit(), posting exitProcess.');
+#endif
+      // When running in a pthread we propagate the exit back to the main thread
+      // where it can decide if the whole process should be shut down or not.
+      // The pthread may have decided not to exit its own runtime, for example
+      // because it runs a main loop, but that doesn't affect the main thread.
+      postMessage({ 'cmd': 'exitProcess', 'returnCode': status });
+      throw new ExitStatus(status);
+    } else {
+#if ASSERTIONS
+      err('main thead called exit: noExitRuntime=' + noExitRuntime);
+#endif
+    }
+  }
+#endif
+
   if (noExitRuntime) {
 #if ASSERTIONS
     // if exit() was called, we may warn the user if the runtime isn't actually being shut down
     if (!implicit) {
 #if EXIT_RUNTIME == 0
       var msg = 'program exited (with status: ' + status + '), but EXIT_RUNTIME is not set, so halting execution but not exiting the runtime or preventing further async execution (build with EXIT_RUNTIME=1, if you want a true shutdown)';
-#if MODULARIZE
-      readyPromiseReject(msg);
-#else
-      err(msg);
-#endif // MODULARIZE
 #else
       var msg = 'program exited (with status: ' + status + '), but noExitRuntime is set due to an async operation, so halting execution but not exiting the runtime or preventing further async execution (you can use emscripten_force_exit, if you want to force a true shutdown)';
+#endif // EXIT_RUNTIME
 #if MODULARIZE
       readyPromiseReject(msg);
-#else
-      err(msg);
 #endif // MODULARIZE
-#endif // EXIT_RUNTIME
+      err(msg);
     }
 #endif // ASSERTIONS
   } else {
@@ -427,7 +421,6 @@ function exit(status, implicit) {
     PThread.terminateAllThreads();
 #endif
 
-    ABORT = true;
     EXITSTATUS = status;
 
     exitRuntime();
@@ -435,6 +428,8 @@ function exit(status, implicit) {
 #if expectToReceiveOnModule('onExit')
     if (Module['onExit']) Module['onExit'](status);
 #endif
+
+    ABORT = true;
   }
 
   quit_(status, new ExitStatus(status));
@@ -465,26 +460,26 @@ if (Module['noInitialRun']) shouldRunNow = false;
 
 #if EXIT_RUNTIME == 0
 #if USE_PTHREADS
-if (!ENVIRONMENT_IS_PTHREAD) // EXIT_RUNTIME=0 only applies to default behavior of the main browser thread
+// EXIT_RUNTIME=0 only applies to the default behavior of the main browser
+// thread.
+// The default behaviour for pthreads is always to exit once they return
+// from their entry point (or call pthread_exit).  If we set noExitRuntime
+// to true here on pthreads they would never complete and attempt to
+// pthread_join to them would block forever.
+// pthreads can still choose to set `noExitRuntime` explicitly, or
+// call emscripten_unwind_to_js_event_loop to extend their lifetime beyond
+// their main function.  See comment in src/worker.js for more.
+noExitRuntime = !ENVIRONMENT_IS_PTHREAD;
+#else
+noExitRuntime = true;
 #endif
-  noExitRuntime = true;
 #endif
 
 #if USE_PTHREADS
 if (!ENVIRONMENT_IS_PTHREAD) {
   run();
 } else {
-#if EMBIND
-  // Embind must initialize itself on all threads, as it generates support JS.
-  Module['___embind_register_native_and_builtin_types']();
-#endif // EMBIND
-#if MODULARIZE
-  // The promise resolve function typically gets called as part of the execution 
-  // of the Module `run`. The workers/pthreads don't execute `run` here, they
-  // call `run` in response to a message at a later time, so the creation
-  // promise can be resolved, marking the pthread-Module as initialized.
-  readyPromiseResolve(Module);
-#endif // MODULARIZE
+  PThread.initWorker();
 }
 #else
 run();

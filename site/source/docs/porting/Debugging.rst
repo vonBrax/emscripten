@@ -24,9 +24,9 @@ Debug information
 
 :ref:`Emcc <emccdoc>` strips out most of the debug information from :ref:`optimized builds <Optimizing-Code>` by default. Optimisation levels :ref:`-O1 <emcc-O1>` and above remove LLVM debug information, and also disable runtime :ref:`ASSERTIONS <debugging-ASSERTIONS>` checks. From optimization level :ref:`-O2 <emcc-O2>` the code is minified by the :term:`Closure Compiler` and becomes virtually unreadable.
 
-The *emcc* :ref:`-g flag <emcc-g>` can be used to preserve debug information in the compiled output. By default, this option preserves white-space, function names and variable names.
+The *emcc* :ref:`-g flag <emcc-g>` can be used to preserve debug information in the compiled output. By default, this option includes Clang / LLVM debug information in a DWARF format in the generated WebAssembly code and preserves white-space, function names and variable names in the generated JavaScript code.
 
-The flag can also be specified with one of five levels: :ref:`-g0 <emcc-g0>`, :ref:`-g1 <emcc-g1>`, :ref:`-g2 <emcc-g2>`, :ref:`-g3 <emcc-g3>`, and :ref:`-g4 <emcc-g4>`. Each level builds on the last to provide progressively more debug information in the compiled output. The :ref:`-g3 flag <emcc-g3>` provides the same level of debug information as the :ref:`-g flag <emcc-g>`.
+The flag can also be specified with one of five levels: :ref:`-g0 <emcc-g0>`, :ref:`-g1 <emcc-g1>`, :ref:`-g2 <emcc-g2>`, :ref:`-g3 <emcc-g3>` (default level), and :ref:`-g4 <emcc-g4>`. Each level builds on the last to provide progressively more debug information in the compiled output. See :ref:`Compiler debug information flags <debugging-debug-information-g>` for more details.
 
 The :ref:`-g4 <emcc-g4>` option provides the most debug information — it generates source maps that allow you to view and debug the *C/C++ source code* in your browser's debugger on Firefox, Chrome or Safari!
 
@@ -90,7 +90,17 @@ Some important settings are:
   -
     .. _debugging-STACK_OVERFLOW_CHECK:
 
-    Passing the ``STACK_OVERFLOW_CHECK=1`` linker flag adds a runtime magic token value at the end of the stack, which is checked in certain locations to verify that the user code does not accidentally write past the end of the stack. While overrunning the Emscripten stack is not a security issue (JavaScript is sandboxed already), writing past the stack causes memory corruption in global data and dynamically allocated memory sections in the Emscripten HEAP, which makes the application fail in unexpected ways. The value ``STACK_OVERFLOW_CHECK=2`` enables slightly more detailed stack guard checks, which can give a more precise callstack at the expense of some performance. Default value is 2 if ``ASSERTIONS=1`` is set, and disabled otherwise.
+    Passing the ``STACK_OVERFLOW_CHECK=1`` linker flag adds a runtime magic
+    token value at the end of the stack, which is checked in certain locations
+    to verify that the user code does not accidentally write past the end of the
+    stack. While overrunning the Emscripten stack is not a security issue for
+    JavaScript (which is unaffected), writing past the stack causes memory
+    corruption in global data and dynamically allocated memory sections in the
+    Emscripten HEAP, which makes the application fail in unexpected ways. The
+    value ``STACK_OVERFLOW_CHECK=2`` enables slightly more detailed stack guard
+    checks, which can give a more precise callstack at the expense of some
+    performance. Default value is 1 if ``ASSERTIONS=1`` is set, and disabled
+    otherwise.
 
   -
     .. _debugging-DEMANGLE_SUPPORT:
@@ -189,30 +199,6 @@ distinguish between them:
       : exception;
   }
 
-
-Disabling optimizations
-=======================
-
-It can sometimes be useful to compile with either LLVM optimizations (:ref:`llvm-opts <emcc-llvm-opts>`) or JavaScript optimizations (:ref:`js-opts <emcc-js-opts>`) disabled.
-
-For example, the following command enables :ref:`debugging-debug-information-g` and :ref:`-O2 <emcc-O2>` optimization (for both LLVM and JavaScript), but then explicitly turns off the JavaScript optimizer.
-
-.. code-block:: bash
-
-  emcc -O2 --js-opts 0 -g4 tests/hello_world_loop.cpp
-
-The result is code that can be more useful for debugging issues related to LLVM-optimized code:
-
-.. code-block:: javascript
-
-  function _main() {
-    var label = 0;
-    var $puts=_puts(((8)|0)); //@line 4 "tests/hello_world.c"
-    return 1; //@line 5 "tests/hello_world.c"
-  }
-
-
-
 .. _debugging-emscripten-specific-issues:
 
 Emscripten-specific issues
@@ -251,13 +237,10 @@ In order to debug these sorts of issues:
 - Compile with ``-Werror``. This turns warnings into errors, which can be useful as some cases of undefined behavior would otherwise show warnings.
 - Use ``-s ASSERTIONS=2`` to get some useful information about the function pointer being called, and its type.
 - Look at the browser stack trace to see where the error occurs and which function should have been called.
-- Build with :ref:`SAFE_HEAP=1 <debugging-SAFE-HEAP>` and function pointer aliasing disabled (``ALIASING_FUNCTION_POINTERS=0``). This should make it impossible for a function pointer to be called with the wrong type without raising an error: ``-s SAFE_HEAP=1 -s ALIASING_FUNCTION_POINTERS=0``
-
+- Build with :ref:`SAFE_HEAP=1 <debugging-SAFE-HEAP>`.
+- :ref:`Sanitizers` can help here, in particular UBSan.
 
 Another function pointer issue is when the wrong function is called. :ref:`SAFE_HEAP=1 <debugging-SAFE-HEAP>` can help with this as it detects some possible errors with function table accesses.
-
-``ALIASING_FUNCTION_POINTERS=0`` is also useful because it ensures that calls to function pointer addresses in the wrong table result in clear errors. Without this setting such calls just execute whatever function is at the address, which can be much harder to debug.
-
 
 
 Infinite loops
@@ -280,7 +263,7 @@ The *AutoDebugger* is the 'nuclear option' for debugging Emscripten code.
 
 .. warning:: This option is primarily intended for Emscripten core developers.
 
-The *AutoDebugger* will rewrite the LLVM bitcode so it prints out each store to memory. This is useful because you can compare the output for different compiler settings in order to detect regressions, or compare the output of JavaScript and LLVM bitcode compiled using :term:`LLVM Nativizer` or :term:`LLVM interpreter`.
+The *AutoDebugger* will rewrite the output so it prints out each store to memory. This is useful because you can compare the output for different compiler settings in order to detect regressions.
 
 The *AutoDebugger* can potentially find **any** problem in the generated code, so it is strictly more powerful than the ``CHECK_*`` settings and ``SAFE_HEAP``. One use of the *AutoDebugger* is to quickly emit lots of logging output, which can then be reviewed for odd behavior. The *AutoDebugger* is also particularly useful for :ref:`debugging regressions <debugging-autodebugger-regressions>`.
 
@@ -316,14 +299,9 @@ Use the following workflow to find regressions with the *AutoDebugger*:
 
 Any difference between the outputs is likely to be caused by the bug.
 
-.. note:: False positives can be caused by calls to ``clock()``, which will differ slightly between runs.
-
-You can also make native builds using the :term:`LLVM Nativizer` tool. This can be run on the autodebugged **.ll** file, which will be emitted in ``/tmp/emscripten_temp`` when ``EMCC_DEBUG=1`` is set.
-
 .. note::
-
-  - The native build created using the :term:`LLVM Nativizer` will use native system libraries. Direct comparisons of output with Emscripten-compiled code can therefore be misleading.
-  - Attempting to interpret code compiled with ``-g`` using the *LLVM Nativizer* or :term:`lli` may crash, so you may need to build once without ``-g`` for these tools, then build again with ``-g``. Another option is to use `tools/exec_llvm.py <https://github.com/emscripten-core/emscripten/blob/master/tools/exec_llvm.py>`_ in Emscripten, which will run *lli* after cleaning out debug info.
+    You may want to use ``-s DETERMINISTIC`` which will ensure that timing
+    and other issues don't cause false positives.
 
 
 Useful Links

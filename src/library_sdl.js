@@ -873,7 +873,7 @@ var LibrarySDL = {
       if (!SDL.eventHandler) return;
 
       while (SDL.pollEvent(SDL.eventHandlerTemp)) {
-        Module['dynCall_iii'](SDL.eventHandler, SDL.eventHandlerContext, SDL.eventHandlerTemp);
+        {{{ makeDynCall('iii', 'SDL.eventHandler') }}}(SDL.eventHandlerContext, SDL.eventHandlerTemp);
       }
     },
 
@@ -1730,7 +1730,7 @@ var LibrarySDL = {
     // We actually do the whole screen in Unlock...
   },
 
-#if !(WASM_BACKEND && ASYNCIFY)
+#if !ASYNCIFY
   SDL_Delay: function(delay) {
     if (!ENVIRONMENT_IS_WORKER) abort('SDL_Delay called on the main thread! Potential infinite loop, quitting. (consider building with async support like ASYNCIFY)');
     // horrible busy-wait, but in a worker it at least does not block rendering
@@ -1776,7 +1776,7 @@ var LibrarySDL = {
   SDL_GetKeyName__sig: 'ii',
   SDL_GetKeyName: function(key) {
     if (!SDL.keyName) {
-      SDL.keyName = allocate(intArrayFromString('unknown key'), 'i8', ALLOC_NORMAL);
+      SDL.keyName = allocate(intArrayFromString('unknown key'), ALLOC_NORMAL);
     }
     return SDL.keyName;
   },
@@ -1838,7 +1838,7 @@ var LibrarySDL = {
   SDL_GetError__sig: 'i',
   SDL_GetError: function() {
     if (!SDL.errorMessage) {
-      SDL.errorMessage = allocate(intArrayFromString("unknown SDL-emscripten error"), 'i8', ALLOC_NORMAL);
+      SDL.errorMessage = allocate(intArrayFromString("unknown SDL-emscripten error"), ALLOC_NORMAL);
     }
     return SDL.errorMessage;
   },
@@ -1846,10 +1846,14 @@ var LibrarySDL = {
   SDL_SetError: function() {},
 
   SDL_malloc__sig: 'ii',
-  SDL_malloc: 'malloc',
+  SDL_malloc: function(size) {
+    return _malloc(size);
+  },
 
   SDL_free__sig: 'vi',
-  SDL_free: 'free',
+  SDL_free: function(ptr) {
+    _free(ptr);
+  },
 
   SDL_CreateRGBSurface__proxy: 'sync',
   SDL_CreateRGBSurface__sig: 'iiiiiiiii',
@@ -2498,13 +2502,13 @@ var LibrarySDL = {
           if (secsUntilNextPlayStart >= SDL.audio.bufferingDelay + SDL.audio.bufferDurationSecs*SDL.audio.numSimultaneouslyQueuedBuffers) return;
 
           // Ask SDL audio data from the user code.
-          {{{ makeDynCall('viii') }}}(SDL.audio.callback, SDL.audio.userdata, SDL.audio.buffer, SDL.audio.bufferSize);
+          {{{ makeDynCall('viii', 'SDL.audio.callback') }}}(SDL.audio.userdata, SDL.audio.buffer, SDL.audio.bufferSize);
           // And queue it to be played after the currently playing audio stream.
           SDL.audio.pushAudio(SDL.audio.buffer, SDL.audio.bufferSize);
         }
       }
 
-#if (ASYNCIFY && WASM_BACKEND)
+#if ASYNCIFY
       var sleepCallback = function() {
         if (SDL.audio && SDL.audio.queueNewAudioData) SDL.audio.queueNewAudioData();
       };
@@ -2653,7 +2657,7 @@ var LibrarySDL = {
     SDL.audio.paused = pauseOn;
   },
 
-  SDL_CloseAudio__deps: ['SDL_PauseAudio', 'free'],
+  SDL_CloseAudio__deps: ['SDL_PauseAudio'],
   SDL_CloseAudio__proxy: 'sync',
   SDL_CloseAudio__sig: 'v',
   SDL_CloseAudio: function() {
@@ -2966,7 +2970,7 @@ var LibrarySDL = {
     }
     audio['onended'] = function SDL_audio_onended() { // TODO: cache these
       if (channelInfo.audio == this) { channelInfo.audio.paused = true; channelInfo.audio = null; }
-      if (SDL.channelFinished) getFuncWrapper(SDL.channelFinished, 'vi')(channel);
+      if (SDL.channelFinished)  {{{ makeDynCall('vi', 'SDL.channelFinished') }}}(channel);
     }
     channelInfo.audio = audio;
     // TODO: handle N loops. Behavior matches Mix_PlayMusic
@@ -2991,7 +2995,7 @@ var LibrarySDL = {
         info.audio = null;
       }
       if (SDL.channelFinished) {
-        getFuncWrapper(SDL.channelFinished, 'vi')(channel);
+        {{{ makeDynCall('vi', 'SDL.channelFinished') }}}(channel);
       }
     }
     if (channel != -1) {
@@ -3056,7 +3060,7 @@ var LibrarySDL = {
       audio = info.audio;
     }
     audio['onended'] = function() { if (SDL.music.audio == this) _Mix_HaltMusic(); } // will send callback
-    audio.loop = loops != 0; // TODO: handle N loops for finite N
+    audio.loop = loops != 0 && loops != 1; // TODO: handle N loops for finite N
     audio.volume = SDL.music.volume;
     SDL.music.audio = audio;
     audio.play();
@@ -3088,7 +3092,7 @@ var LibrarySDL = {
     }
     SDL.music.audio = null;
     if (SDL.hookMusicFinished) {
-      {{{ makeDynCall('v') }}}(SDL.hookMusicFinished);
+      {{{ makeDynCall('v', 'SDL.hookMusicFinished') }}}();
     }
     return 0;
   },
@@ -3529,12 +3533,6 @@ var LibrarySDL = {
 
   SDL_ClearError: function() {},
 
-  SDL_getenv: 'getenv',
-  SDL_getenv__sig: 'ii',
-
-  SDL_putenv: 'putenv',
-  SDL_putenv__sig: 'ii',
-
   // TODO
 
   SDL_SetGamma: function(r, g, b) {
@@ -3568,7 +3566,7 @@ var LibrarySDL = {
       if (SDL.joystickNamePool.hasOwnProperty(name)) {
         return SDL.joystickNamePool[name];
       }
-      return SDL.joystickNamePool[name] = allocate(intArrayFromString(name), 'i8', ALLOC_NORMAL);
+      return SDL.joystickNamePool[name] = allocate(intArrayFromString(name), ALLOC_NORMAL);
     }
     return 0;
   },
@@ -3701,7 +3699,7 @@ var LibrarySDL = {
 
   SDL_GetNumAudioDrivers: function() { return 1 },
   SDL_GetCurrentAudioDriver: function() {
-    return allocate(intArrayFromString('Emscripten Audio'), 'i8', ALLOC_NORMAL);
+    return allocate(intArrayFromString('Emscripten Audio'), ALLOC_NORMAL);
   },
 
   SDL_GetAudioDriver__deps: ['SDL_GetCurrentAudioDriver'],
@@ -3719,7 +3717,7 @@ var LibrarySDL = {
   SDL_AddTimer__sig: 'iiii',
   SDL_AddTimer: function(interval, callback, param) {
     return window.setTimeout(function() {
-      {{{ makeDynCall('iii') }}}(callback, interval, param);
+      {{{ makeDynCall('iii', 'callback') }}}(interval, param);
     }, interval);
   },
   SDL_RemoveTimer__proxy: 'sync',

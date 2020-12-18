@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright 2017 The Emscripten Authors.  All rights reserved.
 # Emscripten is available under two separate licenses, the MIT license and the
 # University of Illinois/NCSA Open Source License.  Both these licenses can be
@@ -12,7 +12,6 @@ Usage: emrun <options> filename.html <args to program>
 See emrun --help for more information
 """
 
-from __future__ import print_function
 import argparse
 import atexit
 import cgi
@@ -21,9 +20,7 @@ import os
 import platform
 import re
 import shlex
-import shutil
 import socket
-import stat
 import struct
 import subprocess
 import sys
@@ -31,6 +28,8 @@ import tempfile
 import threading
 import time
 from operator import itemgetter
+
+from tools import shared
 
 if sys.version_info.major == 2:
   import SocketServer as socketserver
@@ -101,37 +100,16 @@ LINUX = False
 MACOS = False
 if os.name == 'nt':
   WINDOWS = True
+  import winreg
 elif platform.system() == 'Linux':
   LINUX = True
 elif platform.mac_ver()[0] != '':
   MACOS = True
-
   import plistlib
 
 # If you are running on an OS that is not any of these, must add explicit support for it.
 if not WINDOWS and not LINUX and not MACOS:
   raise Exception("Unknown OS!")
-
-import_win32api_modules_warned_once = False
-
-
-def import_win32api_modules():
-  try:
-    global win32api, winreg, GetObject
-    import win32api
-    from win32com.client import GetObject
-    try:
-      import winreg
-    except ImportError:
-      import _winreg as winreg
-
-  except Exception as e:
-    global import_win32api_modules_warned_once
-    if not import_win32api_modules_warned_once:
-      print(str(e), file=sys.stderr)
-      print("Importing Python win32 modules failed! This most likely occurs if you do not have PyWin32 installed! Get it from https://github.com/mhammond/pywin32/releases", file=sys.stderr)
-      import_win32api_modules_warned_once = True
-    raise
 
 
 # Returns wallclock time in seconds.
@@ -183,8 +161,8 @@ def logv(msg):
   Only shown if run with --verbose.
   """
   global last_message_time
-  with http_mutex:
-    if emrun_options.verbose:
+  if emrun_options.verbose:
+    with http_mutex:
       if emrun_options.log_html:
         sys.stdout.write(format_html(msg))
       else:
@@ -250,7 +228,7 @@ def delete_emrun_safe_firefox_profile():
   global temp_firefox_profile_dir
   if temp_firefox_profile_dir is not None:
     logv('remove_tree("' + temp_firefox_profile_dir + '")')
-    remove_tree(temp_firefox_profile_dir)
+    shared.try_delete(temp_firefox_profile_dir)
     temp_firefox_profile_dir = None
 
 
@@ -497,6 +475,7 @@ class HTTPWebServer(socketserver.ThreadingMixIn, HTTPServer):
       now = tick()
       # Did user close browser?
       if not emrun_options.no_browser and not is_browser_process_alive():
+        logv("Shutting down because browser is no longer alive")
         delete_emrun_safe_firefox_profile()
         if not emrun_options.serve_after_close:
           self.is_running = False
@@ -681,34 +660,34 @@ class HTTPHandler(SimpleHTTPRequestHandler):
       data = data.replace("+", " ")
       data = unquote_u(data)
 
-      # The user page sent a message with POST. Parse the message and log it to stdout/stderr.
-      is_stdout = False
-      is_stderr = False
-      seq_num = -1
-      # The html shell is expected to send messages of form ^out^(number)^(message) or ^err^(number)^(message).
-      if data.startswith('^err^'):
-        is_stderr = True
-      elif data.startswith('^out^'):
-        is_stdout = True
-      if is_stderr or is_stdout:
-        try:
-          i = data.index('^', 5)
-          seq_num = int(data[5:i])
-          data = data[i + 1:]
-        except ValueError:
-          pass
-
-      is_exit = data.startswith('^exit^')
-
       if data == '^pageload^': # Browser is just notifying that it has successfully launched the page.
         have_received_messages = True
-      elif not is_exit:
+      elif data.startswith('^exit^'):
+        if not emrun_options.serve_after_exit:
+          page_exit_code = int(data[6:])
+          logv('Web page has quit with a call to exit() with return code ' + str(page_exit_code) + '. Shutting down web server. Pass --serve_after_exit to keep serving even after the page terminates with exit().')
+          self.server.shutdown()
+          return
+      else:
+        # The user page sent a message with POST. Parse the message and log it to stdout/stderr.
+        is_stdout = False
+        is_stderr = False
+        seq_num = -1
+        # The html shell is expected to send messages of form ^out^(number)^(message) or ^err^(number)^(message).
+        if data.startswith('^err^'):
+          is_stderr = True
+        elif data.startswith('^out^'):
+          is_stdout = True
+        if is_stderr or is_stdout:
+          try:
+            i = data.index('^', 5)
+            seq_num = int(data[5:i])
+            data = data[i + 1:]
+          except ValueError:
+            pass
+
         log = browser_loge if is_stderr else browser_logi
         self.server.handle_incoming_message(seq_num, log, data)
-      elif not emrun_options.serve_after_exit:
-        page_exit_code = int(data[6:])
-        logv('Web page has quit with a call to exit() with return code ' + str(page_exit_code) + '. Shutting down web server. Pass --serve_after_exit to keep serving even after the page terminates with exit().')
-        self.server.shutdown()
 
     self.send_response(200)
     self.send_header('Content-type', 'text/plain')
@@ -737,7 +716,7 @@ def get_cpu_info():
   frequency = 0
   try:
     if WINDOWS:
-      import_win32api_modules()
+      from win32com.client import GetObject
       root_winmgmts = GetObject('winmgmts:root\\cimv2')
       cpus = root_winmgmts.ExecQuery('Select * from Win32_Processor')
       cpu_name = cpus[0].Name + ', ' + platform.processor()
@@ -797,11 +776,6 @@ def win_get_gpu_info():
       if gpu['model'] == model:
         return gpu
     return None
-
-  try:
-    import_win32api_modules()
-  except Exception:
-    return []
 
   for i in range(0, 16):
     try:
@@ -914,6 +888,7 @@ def get_gpu_info():
 def get_executable_version(filename):
   try:
     if WINDOWS:
+      import win32api
       info = win32api.GetFileVersionInfo(filename, "\\")
       ms = info['FileVersionMS']
       ls = info['FileVersionLS']
@@ -982,32 +957,29 @@ def win_get_file_properties(fname):
 
   props = {'FixedFileInfo': None, 'StringFileInfo': None, 'FileVersion': None}
 
-  try:
-    import win32api
-    # backslash as parm returns dictionary of numeric info corresponding to VS_FIXEDFILEINFO struc
-    fixedInfo = win32api.GetFileVersionInfo(fname, '\\')
-    props['FixedFileInfo'] = fixedInfo
-    props['FileVersion'] = "%d.%d.%d.%d" % (fixedInfo['FileVersionMS'] / 65536,
-                                            fixedInfo['FileVersionMS'] % 65536,
-                                            fixedInfo['FileVersionLS'] / 65536,
-                                            fixedInfo['FileVersionLS'] % 65536)
+  import win32api
+  # backslash as parm returns dictionary of numeric info corresponding to VS_FIXEDFILEINFO struc
+  fixedInfo = win32api.GetFileVersionInfo(fname, '\\')
+  props['FixedFileInfo'] = fixedInfo
+  props['FileVersion'] = "%d.%d.%d.%d" % (fixedInfo['FileVersionMS'] / 65536,
+                                          fixedInfo['FileVersionMS'] % 65536,
+                                          fixedInfo['FileVersionLS'] / 65536,
+                                          fixedInfo['FileVersionLS'] % 65536)
 
-    # \VarFileInfo\Translation returns list of available (language, codepage)
-    # pairs that can be used to retreive string info. We are using only the first pair.
-    lang, codepage = win32api.GetFileVersionInfo(fname, '\\VarFileInfo\\Translation')[0]
+  # \VarFileInfo\Translation returns list of available (language, codepage)
+  # pairs that can be used to retreive string info. We are using only the first pair.
+  lang, codepage = win32api.GetFileVersionInfo(fname, '\\VarFileInfo\\Translation')[0]
 
-    # any other must be of the form \StringfileInfo\%04X%04X\parm_name, middle
-    # two are language/codepage pair returned from above
+  # any other must be of the form \StringfileInfo\%04X%04X\parm_name, middle
+  # two are language/codepage pair returned from above
 
-    strInfo = {}
-    for propName in propNames:
-      strInfoPath = u'\\StringFileInfo\\%04X%04X\\%s' % (lang, codepage, propName)
-      ## print str_info
-      strInfo[propName] = win32api.GetFileVersionInfo(fname, strInfoPath)
+  strInfo = {}
+  for propName in propNames:
+    strInfoPath = u'\\StringFileInfo\\%04X%04X\\%s' % (lang, codepage, propName)
+    ## print str_info
+    strInfo[propName] = win32api.GetFileVersionInfo(fname, strInfoPath)
 
-    props['StringFileInfo'] = strInfo
-  except Exception:
-    pass
+  props['StringFileInfo'] = strInfo
 
   return props
 
@@ -1064,7 +1036,6 @@ def get_os_version():
   bitness = ' (64bit)' if platform.machine() in ['AMD64', 'x86_64'] else ' (32bit)'
   try:
     if WINDOWS:
-      import_win32api_modules()
       versionHandle = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion")
       productName = winreg.QueryValueEx(versionHandle, "ProductName")
 
@@ -1097,6 +1068,7 @@ def get_system_memory():
         if str(sline[0]) == 'MemTotal:':
           return int(sline[1]) * 1024
     elif WINDOWS:
+      import win32api
       return win32api.GlobalMemoryStatusEx()['TotalPhys']
     elif MACOS:
       return int(check_output(['sysctl', '-n', 'hw.memsize']).strip())
@@ -1132,7 +1104,6 @@ def which(program):
 
 
 def win_get_default_browser():
-  import_win32api_modules()
   # Look in the registry for the default system browser on Windows without relying on
   # 'start %1' since that method has an issue, see comment below.
   try:
@@ -1145,9 +1116,16 @@ def win_get_default_browser():
   except WindowsError:
     logv("Unable to find default browser key in Windows registry. Trying fallback.")
 
-  # Fall back to 'start %1', which we have to treat as if user passed --serve_forever, since
+  # Fall back to 'start "" %1', which we have to treat as if user passed --serve_forever, since
   # for some reason, we are not able to detect when the browser closes when this is passed.
-  return ['cmd', '/C', 'start']
+  #
+  # If the first argument to 'start' is quoted, then 'start' will create a new cmd.exe window with
+  # that quoted string as the title. If the URL contained spaces, it would be quoted by subprocess,
+  # and if we did 'start %1', it would create a new cmd.exe window with the URL as title instead of
+  # actually launching the browser. Therefore, we must pass a dummy quoted first argument for start
+  # to interpret as the title. For this purpose, we use the empty string, which will be quoted
+  # as "". See #9253 for details.
+  return ['cmd', '/C', 'start', '']
 
 
 def find_browser(name):
@@ -1321,21 +1299,6 @@ def subprocess_env():
   return e
 
 
-# Removes a directory tree even if it was readonly, and doesn't throw exception on failure.
-def remove_tree(d):
-  os.chmod(d, stat.S_IWRITE)
-  try:
-    def remove_readonly_and_try_again(func, path, exc_info):
-      if not (os.stat(path).st_mode & stat.S_IWRITE):
-        os.chmod(path, stat.S_IWRITE)
-        func(path)
-      else:
-        raise
-    shutil.rmtree(d, onerror=remove_readonly_and_try_again)
-  except Exception:
-    pass
-
-
 def get_system_info(format_json):
   if emrun_options.android:
     if format_json:
@@ -1414,10 +1377,14 @@ def list_processes_by_name(exe_full_path):
 def run():
   global browser_process, browser_exe, processname_killed_atexit, emrun_options, emrun_not_enabled_nag_printed
   usage_str = """\
-emrun [emrun_options] filename.html [html_cmdline_options]
+emrun [emrun_options] filename.html -- [html_cmdline_options]
 
    where emrun_options specifies command line options for emrun itself, whereas
    html_cmdline_options specifies startup arguments to the program.
+
+If you are seeing "unrecognized arguments" when trying to pass
+arguments to your page, remember to add `--` between arguments
+to emrun itself and arguments to your page.
 """
   parser = argparse.ArgumentParser(usage=usage_str)
 
@@ -1432,7 +1399,7 @@ emrun [emrun_options] filename.html [html_cmdline_options]
                            '--browser=/path/to/browser, to avoid emrun being '
                            'detached from the browser process it spawns.')
 
-  parser.add_argument('--no_server',
+  parser.add_argument('--no_server', action='store_true',
                       help='If specified, a HTTP web server is not launched '
                            'to host the page to run.')
 
@@ -1527,28 +1494,11 @@ emrun [emrun_options] filename.html [html_cmdline_options]
   parser.add_argument('--private_browsing', action='store_true',
                       help='If specified, opens browser in private/incognito mode.')
 
-  parser.add_argument('serve', nargs='*')
+  parser.add_argument('serve', nargs='?', default='')
 
-  opts_with_param = ['--browser', '--browser_args', '--timeout_returncode',
-                     '--timeout', '--silence_timeout', '--log_stderr', '--log_stdout',
-                     '--hostname', '--port', '--serve_root']
+  parser.add_argument('cmdlineparams', nargs='*')
 
-  cmdlineparams = []
-  # Split the startup arguments to two parts, delimited by the first (unbound) positional argument.
-  # The first set is args intended for emrun, and the second set is the cmdline args to program.
-  i = 1
-  while i < len(sys.argv):
-    if sys.argv[i] in opts_with_param:
-      i += 1 # Skip next one, it's the value for this opt.
-    elif not sys.argv[i].startswith('-'):
-      cmdlineparams = sys.argv[i + 1:]
-      sys.argv = sys.argv[:i + 1]
-      break
-    i += 1
-
-  options = parser.parse_args(sys.argv[1:])
-  args = options.serve
-  emrun_options = options
+  options = emrun_options = parser.parse_args()
 
   if options.android:
     global ADB
@@ -1574,17 +1524,20 @@ emrun [emrun_options] filename.html [html_cmdline_options]
       list_pc_browsers()
     return
 
-  if len(args) < 1 and (options.system_info or options.browser_info):
+  if not options.serve and (options.system_info or options.browser_info):
     # Don't run if only --system_info or --browser_info was passed.
     options.no_server = options.no_browser = True
 
-  if len(args) < 1 and not (options.no_server and options.no_browser):
+  if not options.serve and not (options.no_server and options.no_browser):
     logi(usage_str)
     logi('')
     logi('Type emrun --help for a detailed list of available options.')
     return
 
-  file_to_serve = args[0] if len(args) else '.'
+  if options.serve:
+    file_to_serve = options.serve
+  else:
+    file_to_serve = '.'
   file_to_serve_is_url = file_to_serve.startswith('file://') or file_to_serve.startswith('http://') or file_to_serve.startswith('https://')
 
   if options.serve_root:
@@ -1601,8 +1554,8 @@ emrun [emrun_options] filename.html [html_cmdline_options]
     url = file_to_serve
   else:
     url = os.path.relpath(os.path.abspath(file_to_serve), serve_dir)
-    if len(cmdlineparams):
-      url += '?' + '&'.join(cmdlineparams)
+    if len(options.cmdlineparams):
+      url += '?' + '&'.join(options.cmdlineparams)
     hostname = socket.gethostbyname(socket.gethostname()) if options.android else options.hostname
     url = 'http://' + hostname + ':' + str(options.port) + '/' + url
 

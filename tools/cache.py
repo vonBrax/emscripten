@@ -3,12 +3,10 @@
 # University of Illinois/NCSA Open Source License.  Both these licenses can be
 # found in the LICENSE file.
 
-from __future__ import print_function
-from .toolchain_profiler import ToolchainProfiler
 import os
 import shutil
 import logging
-from . import tempfiles, filelock
+from . import tempfiles, filelock, config, utils
 
 logger = logging.getLogger('cache')
 
@@ -30,23 +28,25 @@ class Cache(object):
     dirname = os.path.normpath(dirname)
     self.root_dirname = dirname
 
-    self.filelock_name = dirname.rstrip('/\\') + '.lock'
-    self.filelock = filelock.FileLock(self.filelock_name)
-
     # if relevant, use a subdir of the cache
     if use_subdir:
-      if shared.Settings.WASM_BACKEND:
-        subdir = 'wasm'
-        if shared.Settings.LTO:
-          subdir += '-lto'
-        if shared.Settings.RELOCATABLE:
-          subdir += '-pic'
-      else:
-        subdir = 'asmjs'
+      subdir = 'wasm'
+      if shared.Settings.LTO:
+        subdir += '-lto'
+      if shared.Settings.RELOCATABLE:
+        subdir += '-pic'
+      if shared.Settings.MEMORY64:
+        subdir += '-memory64'
       dirname = os.path.join(dirname, subdir)
 
     self.dirname = dirname
     self.acquired_count = 0
+
+    # since the lock itself lives inside the cache directory we need to ensure it
+    # exists.
+    self.ensure()
+    self.filelock_name = os.path.join(dirname, 'cache.lock')
+    self.filelock = filelock.FileLock(self.filelock_name)
 
   def acquire_cache_lock(self):
     if not self.EM_EXCLUSIVE_CACHE_ACCESS and self.acquired_count == 0:
@@ -76,11 +76,7 @@ class Cache(object):
       logger.debug('PID %s released multiprocess file lock to Emscripten cache at %s' % (str(os.getpid()), self.dirname))
 
   def ensure(self):
-    self.acquire_cache_lock()
-    try:
-      shared.safe_ensure_dirs(self.dirname)
-    finally:
-      self.release_cache_lock()
+    utils.safe_ensure_dirs(self.dirname)
 
   def erase(self):
     self.acquire_cache_lock()
@@ -91,7 +87,9 @@ class Cache(object):
     finally:
       self.release_cache_lock()
 
-  def get_path(self, shortname):
+  def get_path(self, shortname, root=False):
+    if root:
+      return os.path.join(self.root_dirname, shortname)
     return os.path.join(self.dirname, shortname)
 
   def erase_file(self, shortname):
@@ -102,15 +100,23 @@ class Cache(object):
 
   # Request a cached file. If it isn't in the cache, it will be created with
   # the given creator function
-  def get(self, shortname, creator, what=None, force=False):
-    cachename = os.path.abspath(os.path.join(self.dirname, shortname))
+  def get(self, shortname, creator, what=None, force=False, root=False):
+    if root:
+      cachename = os.path.join(self.root_dirname, shortname)
+    else:
+      cachename = os.path.join(self.dirname, shortname)
+    cachename = os.path.abspath(cachename)
+    # Check for existence before taking the lock in case we can avoid the
+    # lock completely.
+    if os.path.exists(cachename) and not force:
+      return cachename
 
     self.acquire_cache_lock()
     try:
       if os.path.exists(cachename) and not force:
         return cachename
       # it doesn't exist yet, create it
-      if shared.FROZEN_CACHE:
+      if config.FROZEN_CACHE:
         # it's ok to build small .txt marker files like "vanilla"
         if not shortname.endswith('.txt'):
           raise Exception('FROZEN_CACHE disallows building system libs: %s' % shortname)
@@ -124,7 +130,7 @@ class Cache(object):
       self.ensure()
       temp = creator()
       if os.path.normcase(temp) != os.path.normcase(cachename):
-        shared.safe_ensure_dirs(os.path.dirname(cachename))
+        utils.safe_ensure_dirs(os.path.dirname(cachename))
         shutil.copyfile(temp, cachename)
       logger.info(' - ok')
     finally:
@@ -133,32 +139,4 @@ class Cache(object):
     return cachename
 
 
-# Given a set of functions of form (ident, text), and a preferred chunk size,
-# generates a set of chunks for parallel processing and caching.
-def chunkify(funcs, chunk_size, DEBUG=False):
-  with ToolchainProfiler.profile_block('chunkify'):
-    chunks = []
-    # initialize reasonably, the rest of the funcs we need to split out
-    curr = []
-    total_size = 0
-    for i in range(len(funcs)):
-      func = funcs[i]
-      curr_size = len(func[1])
-      if total_size + curr_size < chunk_size:
-        curr.append(func)
-        total_size += curr_size
-      else:
-        chunks.append(curr)
-        curr = [func]
-        total_size = curr_size
-    if curr:
-      chunks.append(curr)
-      curr = None
-    return [''.join(func[1] for func in chunk) for chunk in chunks] # remove function names
-
-
-try:
-  from . import shared
-except ImportError:
-  # Python 2 circular import compatibility
-  import shared
+from . import shared

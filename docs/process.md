@@ -61,9 +61,8 @@ How:
    adding the version and the hash. Updating the "latest" tag there to the new
    release is possible, but can also be deferred if you want to do more testing
    before users fetching "latest" get this release.
-2. Tag the emscripten repo on the emscripten commit used by that release (which
-   you can tell from the DEPS file), using something like
-   `git checkout [COMMIT]` ; `git tag [VERSION]` ; `git push --tags`.
+2. Run [update_bazel_workspace.sh](https://github.com/emscripten-core/emsdk/blob/master/scripts/update_bazel_workspace.sh).
+   This will update the bazel toolchain based on the new "latest" tag in emscripten-releases-tags.txt.
 3. Tag the emsdk repo as well, on the commit that does the update, after it
    lands on master.
 4. Update
@@ -77,7 +76,10 @@ How:
      when that's unlikely, etc.
    * There is no need to open a PR for this change, you can optionally just
      commit it directly.
-
+5. Tag the emscripten repo on the emscripten commit on which
+   `emscripten-version.txt` was updated. (This could also be the commit from the
+   DEPS file as well, but this way is less confusing when just working on the
+   emscripten repo, and the difference should only be one commit anyhow.)
 
 Major version update (1.X.Y to 1.(X+1).0)
 -----------------------------------------
